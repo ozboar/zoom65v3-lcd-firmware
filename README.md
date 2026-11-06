@@ -4,11 +4,13 @@ Custom firmware for the stock Zoom65 v3 screen module. The screen MCU does the d
 
 It ports the ScreenKey UI to the 118x118 visible LCD area: bongo cat with WPM and real key presses on its keyboard, and keyboard status. It also adds a clock with four faces, a live WPM graph, an RGB settings page, and system and weather pages that show `zoom-sync` data.
 
+![All screen pages](docs/screens.png)
+
 ## Status
 
 The firmware only ever runs from SRAM, and never writes the screen MCU's internal flash, by design. The screen keeps its stock firmware, and a reset without the keyboard's help returns to it. The external flash is only written for image and GIF uploads, in the same slots stock uses. The weather icons are read from the stock art on it.
 
-It ships inside the keyboard firmware, on the [`meletrix_zoom65_v3`](https://github.com/ozboar/qmk_firmware/tree/meletrix_zoom65_v3) branch of the QMK fork, so there is nothing to flash separately. Release binaries are on [that fork's releases page](https://github.com/ozboar/qmk_firmware/releases).
+The keyboard firmware carries it, built from the [`meletrix_zoom65_v3`](https://github.com/ozboar/qmk_firmware/tree/meletrix_zoom65_v3) branch of the QMK fork, so there is nothing to flash separately. Release binaries are on [that fork's releases page](https://github.com/ozboar/qmk_firmware/releases).
 
 The backlight follows the keyboard's RGB brightness, and dims when idle. While the screen is off, its MCU deep sleeps, and a byte from the keyboard wakes it. See [docs/protocol.md](docs/protocol.md#deep-sleep).
 
@@ -33,11 +35,12 @@ nix develop
 make
 ```
 
-To put a new build on the keyboard, export it to the `meletrix_zoom65_v3` QMK branch, then build and flash that:
+To put a build on the keyboard, pass its outputs to a QMK build of the `meletrix_zoom65_v3` branch, then flash that:
 
 ```sh
-make export QMK=<path to QMK checkout>
-qmk compile -kb meletrix/zoom65_v3/ansi -km via  # in the QMK checkout
+qmk compile -kb meletrix/zoom65_v3/ansi -km via \
+    -e LCDFW_STAGE1=$PWD/build/stage1/stage1.bin \
+    -e LCDFW_PAYLOAD=$PWD/build/lcd.bin
 ```
 
 To switch between this firmware and stock, press `Fn+/` on the VIA keymap, or use the Custom screen firmware toggle in VIA.
@@ -55,7 +58,6 @@ To switch between this firmware and stock, press `Fn+/` on the VIA keymap, or us
 | `src/ui.c` | The UI modes |
 | `src/assets.c` | Generated images and fonts |
 | `stage1/` | First stage loader, receives the firmware at 3 Mbaud |
-| `tools/export_qmk.py` | Writes the firmware as a C file for the keyboard |
 
 ## Regenerating assets
 

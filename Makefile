@@ -18,7 +18,7 @@ LDFLAGS := -mcpu=cortex-m4 -mthumb -mfloat-abi=soft -specs=nano.specs -specs=nos
 
 OBJS := $(addprefix $(BUILD)/,$(SRCS:.c=.o) $(ASMS:.s=.o))
 
-all: $(BUILD)/lcd.bin
+all: $(BUILD)/lcd.bin $(STAGE1)/stage1.bin
 
 $(BUILD)/lcd.bin: $(BUILD)/lcd.elf
 	arm-none-eabi-objcopy -O binary $< $@
@@ -61,8 +61,3 @@ $(STAGE1)/stage1.bin: stage1/stage1.c ld/stage1.ld
 	arm-none-eabi-objcopy -O binary $(STAGE1)/stage1.elf $@
 	arm-none-eabi-size $(STAGE1)/stage1.elf
 
-# QMK points at a QMK checkout with the meletrix_zoom65_v3 branch
-export: $(BUILD)/lcd.bin $(STAGE1)/stage1.bin
-	python3 tools/export_qmk.py $^ $(QMK)/keyboards/meletrix/zoom65_v3/lcdfw/lcd_image.c
-
-.PHONY: export

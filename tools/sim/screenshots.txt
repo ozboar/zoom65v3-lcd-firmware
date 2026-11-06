@@ -2,8 +2,8 @@
 accent 0
 status 0 0 0 82
 extra 4
-versions 0.26.4 12
-build 2026-11-06 ea1a6b4
+versions 0.34.7 12
+build 2026-11-06 v0.8.3
 time 26 11 6 10 9 36
 system 62 55 1234
 weather 3 16 12 18
@@ -14,22 +14,18 @@ mode 0
 wait 600
 face 1
 wait 100
-shot pill-clock-simple
 wait 1000
 shot clock-simple
 face 2
 wait 100
-shot pill-clock-digital
 wait 1000
 shot clock-digital
 face 3
 wait 100
-shot pill-clock-binary
 wait 1000
 shot clock-binary
 face 0
 wait 100
-shot pill-clock-detailed
 wait 1000
 shot clock-detailed
 
@@ -39,15 +35,12 @@ shot menu
 wait 1000
 media 1
 wait 200
-shot pill-gif
 wait 1000
 shot gif
 media 2
 wait 100
-shot pill-reactive
 media 0
 wait 100
-shot pill-image
 wait 1000
 shot image
 
