@@ -1750,6 +1750,10 @@ void ui_on_brightness(uint8_t percent) {
     lcd_set_brightness(percent);
 }
 
+bool ui_needs_speed(void) {
+    return powered && mode == MODE_MEDIA && media_show_gif && !waiting_for_mode && !menu_active && media_playing();
+}
+
 bool ui_can_sleep(void) {
     return !powered && !media_upload_active();
 }

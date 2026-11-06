@@ -12,8 +12,8 @@
 #define PIN_RES GPIO_PINS_0 /* GPIOB */
 #define PIN_CS GPIO_PINS_2  /* GPIOB */
 
-/* From the 240 MHz timer clock, 20 kHz is above what the eye or ear can pick up */
-#define PWM_PERIOD 12000u
+/* From the 72 MHz timer clock, 20 kHz is above what the eye or ear can pick up */
+#define PWM_PERIOD 3600u
 #define BRIGHTNESS_FULL 100u
 
 static bool    panel_awake  = true;

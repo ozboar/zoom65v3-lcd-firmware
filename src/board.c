@@ -51,15 +51,18 @@ static void sysclk_to_pll(void) {
     crm_auto_step_mode_enable(FALSE);
 }
 
-/* Matches the stock clock setup: 8 MHz HEXT / 2 * 60 = 240 MHz, APB at 120 MHz */
+/*
+ * 8 MHz HEXT / 2 * 36 = 144 MHz, then 72 MHz through the AHB divider, well below the 240 MHz stock
+ * runs at. APB2 stays at 72 MHz and APB1 at 36 MHz at either speed, so the peripherals never notice.
+ */
 static void clock_init(void) {
     crm_reset();
     hext_start();
-    crm_pll_config(CRM_PLL_SOURCE_HEXT_DIV, CRM_PLL_MULT_60, CRM_PLL_OUTPUT_RANGE_GT72MHZ);
+    crm_pll_config(CRM_PLL_SOURCE_HEXT_DIV, CRM_PLL_MULT_36, CRM_PLL_OUTPUT_RANGE_GT72MHZ);
     crm_hext_clock_div_set(CRM_HEXT_DIV_2);
     pll_start();
-    crm_ahb_div_set(CRM_AHB_DIV_1);
-    crm_apb2_div_set(CRM_APB2_DIV_2);
+    crm_ahb_div_set(CRM_AHB_DIV_2);
+    crm_apb2_div_set(CRM_APB2_DIV_1);
     crm_apb1_div_set(CRM_APB1_DIV_2);
     sysclk_to_pll();
     system_core_clock_update();
@@ -212,6 +215,31 @@ void board_init(void) {
 
 uint32_t board_millis(void) {
     return ticks;
+}
+
+void board_set_fast(bool fast) {
+    static bool is_fast;
+
+    if (fast == is_fast) {
+        return;
+    }
+    is_fast = fast;
+
+    __disable_irq();
+    crm_auto_step_mode_enable(TRUE);
+    if (fast) {
+        crm_apb2_div_set(CRM_APB2_DIV_2);
+        crm_apb1_div_set(CRM_APB1_DIV_4);
+        crm_ahb_div_set(CRM_AHB_DIV_1);
+    } else {
+        crm_ahb_div_set(CRM_AHB_DIV_2);
+        crm_apb2_div_set(CRM_APB2_DIV_1);
+        crm_apb1_div_set(CRM_APB1_DIV_2);
+    }
+    crm_auto_step_mode_enable(FALSE);
+    system_core_clock_update();
+    SysTick_Config(system_core_clock / 1000);
+    __enable_irq();
 }
 
 void board_delay_ms(uint32_t ms) {

@@ -17,6 +17,7 @@ int main(void) {
     for (;;) {
         link_poll();
         ui_task();
+        board_set_fast(ui_needs_speed());
 
         if (ui_can_sleep() && link_quiet(SLEEP_QUIET_MS) && board_deep_sleep()) {
             link_on_wake();
