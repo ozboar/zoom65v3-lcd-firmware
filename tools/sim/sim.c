@@ -68,18 +68,18 @@ void lcd_stream_begin(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1) {
     window_y0 = y0;
     window_x1 = x1;
     window_y1 = y1;
-    cursor_x  = x1;
+    cursor_x  = x0;
     cursor_y  = y0;
 }
 
-/* Same order as the panel: x from right to left, y from top to bottom in each column */
+/* Same order as the panel: left to right, then top to bottom */
 void lcd_stream_pixel(uint16_t color) {
     if (cursor_x >= 0 && cursor_x < LCD_WIDTH && cursor_y < LCD_HEIGHT) {
         framebuffer[cursor_y][cursor_x] = color;
     }
-    if (++cursor_y > window_y1) {
-        cursor_y = window_y0;
-        cursor_x--;
+    if (++cursor_x > window_x1) {
+        cursor_x = window_x0;
+        cursor_y++;
     }
 }
 

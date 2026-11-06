@@ -244,10 +244,8 @@ static void draw_canvas(void) {
 
     page_changed = true;
     lcd_stream_begin(x, y, x + width - 1, y + height - 1);
-    for (int16_t col = width - 1; col >= 0; col--) {
-        for (uint8_t row = 0; row < height; row++) {
-            lcd_stream_pixel(canvas[(uint32_t)row * width + (uint32_t)col]);
-        }
+    for (uint32_t i = 0; i < (uint32_t)width * height; i++) {
+        lcd_stream_pixel(canvas[i]);
     }
     lcd_stream_end();
 

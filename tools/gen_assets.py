@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Generate src/assets.c and src/assets.h from the art and fonts.
 
-Images are stored palette and RLE encoded in LCD stream order, which is screen x
-descending and y ascending for each column. Fonts are stored as 2 bits per pixel.
+Images are stored palette and RLE encoded in LCD stream order, which is left to
+right, then top to bottom. Fonts are stored as 2 bits per pixel.
 
 usage: gen_assets.py <bongo frames dir> <fonts dir> <output dir>
 """
@@ -28,8 +28,8 @@ def encode_image(path):
     image = Image.open(path).convert("RGB")
     width, height = image.size
     palette, stream = [], []
-    for x in reversed(range(width)):
-        for y in range(height):
+    for y in range(height):
+        for x in range(width):
             color = rgb565(image.getpixel((x, y)))
             if color not in palette:
                 palette.append(color)

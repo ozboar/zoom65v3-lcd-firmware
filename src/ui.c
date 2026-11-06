@@ -859,16 +859,19 @@ static void graph_draw(void) {
         grid[row] = (uint32_t)row * scale / GRAPH_HEIGHT / GRAPH_GRID_WPM != (uint32_t)(row - 1) * scale / GRAPH_HEIGHT / GRAPH_GRID_WPM;
     }
 
-    lcd_stream_begin(GRAPH_LEFT, GRAPH_TOP, GRAPH_RIGHT, GRAPH_BOTTOM);
+    /* Newest at the right. Zero and unfilled history still draw a line along the bottom */
+    uint8_t heights[GRAPH_WIDTH];
     for (uint8_t age = 0; age < GRAPH_WIDTH; age++) {
-        const uint16_t value  = history[(history_head + GRAPH_WIDTH - age) % GRAPH_WIDTH];
-        uint8_t        height = (uint8_t)((uint32_t)value * GRAPH_HEIGHT / scale);
-        /* Zero and unfilled history still draw a line along the bottom */
-        if (!height) {
-            height = 1;
-        }
-        for (int16_t row = GRAPH_HEIGHT - 1; row >= 0; row--) {
-            uint16_t color;
+        const uint16_t value = history[(history_head + GRAPH_WIDTH - age) % GRAPH_WIDTH];
+        const uint8_t  bar   = (uint8_t)((uint32_t)value * GRAPH_HEIGHT / scale);
+        heights[GRAPH_WIDTH - 1 - age] = bar ? bar : 1;
+    }
+
+    lcd_stream_begin(GRAPH_LEFT, GRAPH_TOP, GRAPH_RIGHT, GRAPH_BOTTOM);
+    for (int16_t row = GRAPH_HEIGHT - 1; row >= 0; row--) {
+        for (uint8_t col = 0; col < GRAPH_WIDTH; col++) {
+            const uint8_t height = heights[col];
+            uint16_t      color;
             if (row + 1 == height) {
                 color = COLOR_WHITE;
             } else if (row < height) {

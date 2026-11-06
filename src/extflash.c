@@ -95,9 +95,9 @@ uint32_t extflash_read_word(uint32_t address) {
 
 static void draw_pixels(uint32_t data, uint8_t x, uint8_t y, uint8_t width, uint8_t height, uint8_t scale) {
     lcd_stream_begin(x, y, x + width * scale - 1, y + height * scale - 1);
-    for (int16_t col = width - 1; col >= 0; col--) {
+    for (uint8_t row = 0; row < height; row++) {
         for (uint8_t pass = 0; pass < scale; pass++) {
-            for (uint8_t row = 0; row < height; row++) {
+            for (uint8_t col = 0; col < width; col++) {
                 const uint16_t color = read_pixel(data + ((uint32_t)row * width + (uint32_t)col) * BYTES_PER_PIXEL);
                 for (uint8_t repeat = 0; repeat < scale; repeat++) {
                     lcd_stream_pixel(color);

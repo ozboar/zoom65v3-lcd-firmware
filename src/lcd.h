@@ -16,10 +16,7 @@ void lcd_set_backlight(bool on);
 /* Backlight brightness, 0 to 100 */
 void lcd_set_brightness(uint8_t percent);
 
-/*
- * Starts writing a screen rectangle. The panel is rotated, so pixels go in column
- * order: x from right to left, and y from top to bottom within each column.
- */
+/* Starts writing a screen rectangle. Pixels go left to right, then top to bottom */
 void lcd_stream_begin(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1);
 void lcd_stream_pixel(uint16_t color);
 void lcd_stream_end(void);

@@ -2,10 +2,10 @@
 #include "board.h"
 #include "lcd.h"
 
-/* The controller addresses 128x128. Screen (x, y) is column 10 + y, row 127 - x */
+/* The controller addresses 128x128. The panel is mounted rotated, which MADCTL_ROTATED undoes, so screen (x, y) is column x, row 10 + y */
 #define CONTROLLER_SIZE 128
-#define OFFSET_COLUMN 10
-#define LAST_ROW 127
+#define OFFSET_ROW 10
+#define MADCTL_ROTATED 0x60
 
 #define PIN_RS GPIO_PINS_6  /* GPIOA */
 #define PIN_BLK GPIO_PINS_3 /* GPIOA */
@@ -47,7 +47,7 @@ static const uint8_t init_table[] = {
     0xF1, 14, 0x16, 0x40, 0x1C, 0x54, 0xA9, 0x2D, 0x2E, 0x56, 0x10, 0x0D, 0x0C, 0x1A, 0x14, 0x1E,
     0xF4, 3, 0x00, 0x00, 0xFF,
     0xBA, 2, 0xFF, 0xFF,
-    0x36, 1, 0xC0,
+    0x36, 1, MADCTL_ROTATED,
 };
 
 static inline void spi_send(uint8_t b) {
@@ -252,8 +252,8 @@ void lcd_set_power(bool on) {
 }
 
 void lcd_stream_begin(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1) {
-    const uint8_t columns[4] = {0, (uint8_t)(OFFSET_COLUMN + y0), 0, (uint8_t)(OFFSET_COLUMN + y1)};
-    const uint8_t rows[4]    = {0, (uint8_t)(LAST_ROW - x1), 0, (uint8_t)(LAST_ROW - x0)};
+    const uint8_t columns[4] = {0, x0, 0, x1};
+    const uint8_t rows[4]    = {0, (uint8_t)(OFFSET_ROW + y0), 0, (uint8_t)(OFFSET_ROW + y1)};
 
     lcd_write(0x2A, columns, sizeof(columns));
     lcd_write(0x2B, rows, sizeof(rows));

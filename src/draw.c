@@ -67,8 +67,8 @@ void draw_text(uint8_t x, uint8_t y, const font_t *font, const char *text, uint1
         const uint8_t *data  = font->data + font->offsets[code - font->first];
 
         lcd_stream_begin(x, y, x + width - 1, y + font->height - 1);
-        for (int16_t col = width - 1; col >= 0; col--) {
-            for (uint8_t row = 0; row < font->height; row++) {
+        for (uint8_t row = 0; row < font->height; row++) {
+            for (uint8_t col = 0; col < width; col++) {
                 uint32_t pixel = (uint32_t)row * width + (uint32_t)col;
                 uint8_t  level = (data[pixel / 4] >> ((pixel % 4) * 2)) & 3;
                 lcd_stream_pixel(colors[level]);
