@@ -53,7 +53,7 @@ To switch between this firmware and stock, press `Fn+/` on the VIA keymap, or us
 | `src/draw.c` | Rectangles, images and text |
 | `src/extflash.c` | Reads stock images and uploads from the external flash |
 | `src/media.c` | Image and GIF page, and stock uploads to the external flash |
-| `src/gif.c` | GIF decoder |
+| `src/gif.c` | Plays GIFs with the decoder in `lib/animatedgif` |
 | `src/link.c` | UART frames from the keyboard, see [docs/protocol.md](docs/protocol.md) |
 | `src/ui.c` | The UI modes |
 | `src/assets.c` | Generated images and fonts |
@@ -83,7 +83,8 @@ The pages and sample data come from `tools/sim/screenshots.txt`. To use your own
 - The cat comes from the dark layers of [bongo.cat](https://github.com/Externalizable/bongo.cat) (MIT, Copyright (c) 2018 Eric Huber), redrawn with a keyboard. That site credits the meme to DitzyFlama, using a drawing by StrayRogue.
 - The font is Thintel, from QMK. The large digits are its digits at 3x.
 - `lib/at32` is Artery's AT32F403A/407 firmware library (BSD 3-Clause).
+- `lib/animatedgif` is [AnimatedGIF](https://github.com/bitbank2/AnimatedGIF) by BitBank Software (Apache 2.0), with the changes listed in its README.
 
 ## License
 
-GPL-2.0-or-later, see [LICENSE](LICENSE).
+GPL-3.0-or-later, see [LICENSE](LICENSE).

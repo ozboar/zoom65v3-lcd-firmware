@@ -2,7 +2,7 @@
 MEMORY
 {
     RAM (rwx) : ORIGIN = 0x20008000, LENGTH = 64K
-    MEDIA (rw) : ORIGIN = 0x20018000, LENGTH = 48K
+    MEDIA (rw) : ORIGIN = 0x20018000, LENGTH = 112K
 }
 
 ENTRY(Reset_Handler)
