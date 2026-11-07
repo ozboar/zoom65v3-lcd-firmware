@@ -164,6 +164,14 @@ enum { CLOCK_FACE_DETAILED, CLOCK_FACE_SIMPLE, CLOCK_FACE_DIGITAL, CLOCK_FACE_BI
 #define STATUS_BUILD_Y 106
 #define STATUS_BUILD_FIELD_SIZE 10
 #define STATUS_BATTERY_LOW 20
+#define BATTERY_WARN_PERCENT 10
+#define BATTERY_WARN_CLEAR_PERCENT 15
+/* Pages redraw over the icon, so this is how long it can stay hidden */
+#define BATTERY_WARN_REPAINT_MS 50
+#define BATTERY_WARN_X 52
+#define BATTERY_WARN_Y 1
+#define BATTERY_WARN_WIDTH 13
+#define BATTERY_WARN_HEIGHT 7
 #define STATUS_FLAG_CHARGING (1u << 0)
 #define STATUS_FLAG_FULL (1u << 1)
 #define STATUS_FLAG_NKRO (1u << 2)
@@ -1474,7 +1482,40 @@ static bool media_playing(void) {
     return !media_reactive || any_key_held() || board_millis() - media_key_timer < MEDIA_REACTIVE_MS;
 }
 
+static void battery_warn_draw(void) {
+    const uint8_t right  = BATTERY_WARN_X + BATTERY_WARN_WIDTH - 1;
+    const uint8_t bottom = BATTERY_WARN_Y + BATTERY_WARN_HEIGHT - 1;
+
+    draw_fill(BATTERY_WARN_X - 1, 0, right + 3, bottom + 1, COLOR_BLACK);
+    draw_outline(BATTERY_WARN_X, BATTERY_WARN_Y, right, bottom, COLOR_LOW);
+    draw_fill(right + 1, BATTERY_WARN_Y + 2, right + 2, bottom - 2, COLOR_LOW);
+    draw_fill(BATTERY_WARN_X + 2, BATTERY_WARN_Y + 2, BATTERY_WARN_X + 3, bottom - 2, COLOR_LOW);
+}
+
+/* The info page already shows the battery */
+static void battery_warn_task(bool page_drew) {
+    static bool     warning;
+    static uint32_t repaint_timer;
+    const bool      charging = status_flags & STATUS_FLAG_CHARGING;
+    const bool      known    = status_extra_received && status_battery;
+
+    if (!warning && known && !charging && status_battery <= BATTERY_WARN_PERCENT) {
+        warning = true;
+    } else if (warning && (charging || status_battery >= BATTERY_WARN_CLEAR_PERCENT)) {
+        warning = false;
+        enter_mode();
+        return;
+    }
+
+    if (warning && mode != MODE_STATUS && (page_drew || board_millis() - repaint_timer >= BATTERY_WARN_REPAINT_MS)) {
+        repaint_timer = board_millis();
+        battery_warn_draw();
+    }
+}
+
 void ui_task(void) {
+    bool media_drew = false;
+
     media_task();
 
     if (!powered) {
@@ -1531,11 +1572,14 @@ void ui_task(void) {
         }
         case MODE_MEDIA:
             media_page_task(media_playing());
-            pill_task(media_page_take_drawn());
+            media_drew = media_page_take_drawn();
+            pill_task(media_drew);
             break;
         default:
             break;
     }
+
+    battery_warn_task(media_drew);
 }
 
 void ui_on_tap(void) {
