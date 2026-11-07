@@ -20,8 +20,8 @@ OBJS := $(addprefix $(BUILD)/,$(SRCS:.c=.o) $(ASMS:.s=.o))
 
 all: $(BUILD)/lcd.bin $(STAGE1)/stage1.bin
 
-# The GIF path is the only part of the firmware short of time, the rest is built for size
-$(BUILD)/src/gif.o $(BUILD)/src/media.o $(BUILD)/src/lcd.o: CFLAGS += -O2
+# The GIF decoder is the only part of the firmware short of time, the rest is built for size
+$(BUILD)/src/gif.o: CFLAGS += -O2
 
 $(BUILD)/lcd.bin: $(BUILD)/lcd.elf
 	arm-none-eabi-objcopy -O binary $< $@

@@ -20,3 +20,9 @@ void lcd_set_brightness(uint8_t percent);
 void lcd_stream_begin(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1);
 void lcd_stream_pixel(uint16_t color);
 void lcd_stream_end(void);
+
+/* Starts sending a whole rectangle of big endian pixels and returns. They must stay unchanged until lcd_wait_idle */
+void lcd_send_rect(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, const uint8_t *pixels);
+
+/* Waits for lcd_send_rect to finish. Every other panel access does this itself */
+void lcd_wait_idle(void);

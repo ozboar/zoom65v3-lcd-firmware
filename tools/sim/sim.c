@@ -86,6 +86,16 @@ void lcd_stream_pixel(uint16_t color) {
 void lcd_stream_end(void) {
 }
 
+void lcd_send_rect(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, const uint8_t *pixels) {
+    lcd_stream_begin(x0, y0, x1, y1);
+    for (uint32_t i = 0; i < (x1 - x0 + 1u) * (y1 - y0 + 1u) * 2u; i += 2) {
+        lcd_stream_pixel((uint16_t)(pixels[i] << 8 | pixels[i + 1]));
+    }
+}
+
+void lcd_wait_idle(void) {
+}
+
 static void map_flash(const char *path, uint32_t address, uint32_t size) {
     void *memory = mmap((void *)(uintptr_t)address, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
     if (memory != (void *)(uintptr_t)address) {

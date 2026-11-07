@@ -236,18 +236,13 @@ static void draw_message(const char *text) {
 }
 
 static void draw_canvas(void) {
-    const uint8_t   width  = gif_width();
-    const uint8_t   height = gif_height();
-    const uint8_t   x      = (LCD_WIDTH - width) / 2;
-    const uint8_t   y      = (LCD_HEIGHT - height) / 2;
-    const uint16_t *canvas = gif_canvas();
+    const uint8_t width  = gif_width();
+    const uint8_t height = gif_height();
+    const uint8_t x      = (LCD_WIDTH - width) / 2;
+    const uint8_t y      = (LCD_HEIGHT - height) / 2;
 
     page_changed = true;
-    lcd_stream_begin(x, y, x + width - 1, y + height - 1);
-    for (uint32_t i = 0; i < (uint32_t)width * height; i++) {
-        lcd_stream_pixel(canvas[i]);
-    }
-    lcd_stream_end();
+    lcd_send_rect(x, y, x + width - 1, y + height - 1, gif_canvas());
 
     if (margins_stale) {
         margins_stale = false;

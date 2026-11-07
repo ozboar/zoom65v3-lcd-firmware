@@ -1,5 +1,6 @@
 #include "at32f403a_407.h"
 #include "board.h"
+#include "lcd.h"
 #include "link.h"
 
 /* The stock firmware's RTC period, kept so that it finds the RTC as it left it */
@@ -225,6 +226,7 @@ void board_set_fast(bool fast) {
     }
     is_fast = fast;
 
+    lcd_wait_idle();
     __disable_irq();
     crm_auto_step_mode_enable(TRUE);
     if (fast) {

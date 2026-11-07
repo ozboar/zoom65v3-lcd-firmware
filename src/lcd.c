@@ -16,10 +16,14 @@
 #define PWM_PERIOD 3600u
 #define BRIGHTNESS_FULL 100u
 
+/* Fixed to SPI1 TX by the hardware */
+#define SPI_DMA DMA1_CHANNEL3
+
 static bool    panel_awake  = true;
 static bool    backlight_on = false;
 static uint8_t brightness   = BRIGHTNESS_FULL;
 static bool    pwm_running;
+static bool    dma_running;
 
 /* Command, data length, data */
 static const uint8_t init_table[] = {
@@ -64,6 +68,7 @@ static void spi_wait_idle(void) {
 }
 
 static void select_command(void) {
+    lcd_wait_idle();
     GPIOA->clr = PIN_RS;
     GPIOB->clr = PIN_CS;
 }
@@ -76,6 +81,18 @@ static void select_data(void) {
 static void deselect(void) {
     spi_wait_idle();
     GPIOB->scr = PIN_CS;
+}
+
+void lcd_wait_idle(void) {
+    if (!dma_running) {
+        return;
+    }
+    while (!(DMA1->sts & (DMA1_FDT3_FLAG | DMA1_DTERR3_FLAG))) {
+    }
+    dma_channel_enable(SPI_DMA, FALSE);
+    dma_flag_clear(DMA1_GL3_FLAG);
+    dma_running = false;
+    deselect();
 }
 
 static void lcd_write(uint8_t cmd, const uint8_t *data, uint32_t len) {
@@ -94,6 +111,7 @@ static void pins_init(void) {
     crm_periph_clock_enable(CRM_GPIOA_PERIPH_CLOCK, TRUE);
     crm_periph_clock_enable(CRM_GPIOB_PERIPH_CLOCK, TRUE);
     crm_periph_clock_enable(CRM_SPI1_PERIPH_CLOCK, TRUE);
+    crm_periph_clock_enable(CRM_DMA1_PERIPH_CLOCK, TRUE);
 
     gpio_default_para_init(&gpio);
     gpio.gpio_drive_strength = GPIO_DRIVE_STRENGTH_STRONGER;
@@ -127,7 +145,24 @@ static void spi_setup(void) {
     spi.clock_phase            = SPI_CLOCK_PHASE_2EDGE;
     spi.cs_mode_selection      = SPI_CS_SOFTWARE_MODE;
     spi_init(SPI1, &spi);
+    spi_i2s_dma_transmitter_enable(SPI1, TRUE);
     spi_enable(SPI1, TRUE);
+}
+
+static void dma_setup(void) {
+    dma_init_type dma;
+
+    dma_reset(SPI_DMA);
+    dma_default_para_init(&dma);
+    dma.peripheral_base_addr  = (uint32_t)&SPI1->dt;
+    dma.direction             = DMA_DIR_MEMORY_TO_PERIPHERAL;
+    dma.peripheral_inc_enable = FALSE;
+    dma.memory_inc_enable     = TRUE;
+    dma.peripheral_data_width = DMA_PERIPHERAL_DATA_WIDTH_BYTE;
+    dma.memory_data_width     = DMA_MEMORY_DATA_WIDTH_BYTE;
+    dma.loop_mode_enable      = FALSE;
+    dma.priority              = DMA_PRIORITY_MEDIUM;
+    dma_init(SPI_DMA, &dma);
 }
 
 static void clear_memory(void) {
@@ -147,6 +182,7 @@ static void clear_memory(void) {
 void lcd_init(void) {
     pins_init();
     spi_setup();
+    dma_setup();
 
     GPIOB->scr = PIN_RES;
     board_delay_ms(10);
@@ -269,4 +305,12 @@ void lcd_stream_pixel(uint16_t color) {
 
 void lcd_stream_end(void) {
     deselect();
+}
+
+void lcd_send_rect(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, const uint8_t *pixels) {
+    lcd_stream_begin(x0, y0, x1, y1);
+    SPI_DMA->maddr = (uint32_t)pixels;
+    dma_data_number_set(SPI_DMA, (uint16_t)((x1 - x0 + 1u) * (y1 - y0 + 1u) * 2u));
+    dma_running = true;
+    dma_channel_enable(SPI_DMA, TRUE);
 }

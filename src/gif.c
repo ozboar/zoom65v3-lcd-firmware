@@ -19,6 +19,7 @@
 #pragma GCC diagnostic pop
 
 #include "extflash.h"
+#include "lcd.h"
 
 #define DISPOSE_BACKGROUND 2
 #define INTERLACED 0x40
@@ -78,7 +79,7 @@ static void fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
 }
 
 bool gif_open(uint32_t address, uint32_t length) {
-    GIF_begin(&decoder, GIF_PALETTE_RGB565_LE);
+    GIF_begin(&decoder, GIF_PALETTE_RGB565_BE);
     decoder.pfnRead       = read_file;
     decoder.pfnSeek       = seek_file;
     decoder.GIFFile.iSize = (int32_t)length;
@@ -91,6 +92,7 @@ bool gif_open(uint32_t address, uint32_t length) {
     width   = (uint8_t)decoder.iCanvasWidth;
     height  = (uint8_t)decoder.iCanvasHeight;
     dispose = 0;
+    lcd_wait_idle();
     fill_rect(0, 0, width, height);
     return true;
 }
@@ -110,6 +112,7 @@ static int output_row(int line) {
     return line > last / 8 ? line * 8 - ((last & ~3) | 4) : line * 8;
 }
 
+/* Only reaches the turbo buffer, so the panel can still be reading the canvas */
 static bool decode_frame(int *delay) {
     decoder.iError = GIF_SUCCESS;
     GIF_playFrame(&decoder, delay, 0);
@@ -132,6 +135,7 @@ bool gif_next_frame(uint32_t *delay_ms) {
         }
     }
 
+    lcd_wait_idle();
     if (restarting) {
         fill_rect(0, 0, width, height);
     } else if (dispose == DISPOSE_BACKGROUND) {
@@ -176,6 +180,6 @@ uint8_t gif_height(void) {
     return height;
 }
 
-const uint16_t *gif_canvas(void) {
-    return canvas;
+const uint8_t *gif_canvas(void) {
+    return (const uint8_t *)canvas;
 }
