@@ -16,16 +16,16 @@ CFLAGS := -mcpu=cortex-m4 -mthumb -mfloat-abi=soft -Os -g -std=gnu11 -Wall -Wext
 LDFLAGS := -mcpu=cortex-m4 -mthumb -mfloat-abi=soft -specs=nano.specs -specs=nosys.specs \
 	-Wl,--gc-sections -Wl,--no-warn-rwx-segments -Tld/sram.ld
 
+OBJS := $(addprefix $(BUILD)/,$(SRCS:.c=.o) $(ASMS:.s=.o))
+
+all: $(BUILD)/lcd.bin $(STAGE1)/stage1.bin
+
 # The release tag when building one, otherwise the git revision
 LCD_VERSION := $(shell git describe --tags --exact-match --match 'v*' 2>/dev/null || git rev-parse --short=7 HEAD 2>/dev/null)
 # Rebuilds what shows it when it changes
 $(shell mkdir -p $(BUILD); [ "$$(cat $(BUILD)/version 2>/dev/null)" = "$(LCD_VERSION)" ] || echo "$(LCD_VERSION)" > $(BUILD)/version)
 $(BUILD)/src/ui.o: $(BUILD)/version
 $(BUILD)/src/ui.o: CFLAGS += -DLCD_VERSION=\"$(LCD_VERSION)\"
-
-OBJS := $(addprefix $(BUILD)/,$(SRCS:.c=.o) $(ASMS:.s=.o))
-
-all: $(BUILD)/lcd.bin $(STAGE1)/stage1.bin
 
 # The GIF decoder is the only part of the firmware short of time, the rest is built for size
 $(BUILD)/src/gif.o: CFLAGS += -O2
