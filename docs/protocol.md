@@ -23,7 +23,7 @@ Frames are `A5 03 <command> <payload>`. They are not acknowledged, so sending ne
 | `0D` | `on`, `mode`, `hue`, `sat`, `val`, `speed` | RGB page settings |
 | `0E` | 20 bytes | RGB effect name, zero padded |
 | `0F` | `face` | Clock face: 0 detailed, 1 simple, 2 digital, 3 binary. Changing it while its page is open shows the selection as dots |
-| `10` | `date[10]`, `hash[10]` | Keyboard firmware build date and git hash, each zero padded |
+| `10` | `date[10]`, `hash[10]` | Keyboard firmware build date, unused, and its release tag or git hash, each zero padded |
 | `11` | `qmk[18]`, `via_hi`, `via_lo` | QMK version, zero padded, and VIA protocol version, 0 without VIA |
 | `12` | `setting` | Image and GIF page: 0 image, 1 GIF, 2 GIF that only plays while typing. Changing it while its page is open shows the selection as dots |
 | `13` | `percent` | Backlight brightness, 0-100. Stays off while `07` has it off |

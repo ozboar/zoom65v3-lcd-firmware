@@ -16,6 +16,13 @@ CFLAGS := -mcpu=cortex-m4 -mthumb -mfloat-abi=soft -Os -g -std=gnu11 -Wall -Wext
 LDFLAGS := -mcpu=cortex-m4 -mthumb -mfloat-abi=soft -specs=nano.specs -specs=nosys.specs \
 	-Wl,--gc-sections -Wl,--no-warn-rwx-segments -Tld/sram.ld
 
+# The release tag when building one, otherwise the git revision
+LCD_VERSION := $(shell git describe --tags --exact-match --match 'v*' 2>/dev/null || git rev-parse --short=7 HEAD 2>/dev/null)
+# Rebuilds what shows it when it changes
+$(shell mkdir -p $(BUILD); [ "$$(cat $(BUILD)/version 2>/dev/null)" = "$(LCD_VERSION)" ] || echo "$(LCD_VERSION)" > $(BUILD)/version)
+$(BUILD)/src/ui.o: $(BUILD)/version
+$(BUILD)/src/ui.o: CFLAGS += -DLCD_VERSION=\"$(LCD_VERSION)\"
+
 OBJS := $(addprefix $(BUILD)/,$(SRCS:.c=.o) $(ASMS:.s=.o))
 
 all: $(BUILD)/lcd.bin $(STAGE1)/stage1.bin
@@ -45,9 +52,9 @@ INTERNAL_FLASH ?= $(DUMPS)/screen-mcu.bin
 EXTERNAL_FLASH ?= $(DUMPS)/screen-extflash.bin
 SIM_SRCS := tools/sim/sim.c $(addprefix src/,ui.c draw.c gif.c media.c extflash.c assets.c)
 
-$(BUILD)/sim/sim: $(SIM_SRCS) $(wildcard src/*.h) tools/sim/at32f403a_407.h
+$(BUILD)/sim/sim: $(SIM_SRCS) $(wildcard src/*.h) tools/sim/at32f403a_407.h $(BUILD)/version
 	@mkdir -p $(dir $@)
-	gcc -O1 -std=gnu11 -w -Itools/sim -Isrc -Ilib/animatedgif $(SIM_SRCS) -o $@
+	gcc -O1 -std=gnu11 -w -DLCD_VERSION=\"$(LCD_VERSION)\" -Itools/sim -Isrc -Ilib/animatedgif $(SIM_SRCS) -o $@
 
 screenshots: $(BUILD)/sim/sim
 	python3 tools/screenshots.py $< $(INTERNAL_FLASH) $(EXTERNAL_FLASH) $(BUILD)/screenshots

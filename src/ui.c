@@ -158,6 +158,7 @@ enum { CLOCK_FACE_DETAILED, CLOCK_FACE_SIMPLE, CLOCK_FACE_DIGITAL, CLOCK_FACE_BI
 #define STATUS_KEYS_Y 78
 #define STATUS_UPTIME_X 64
 #define STATUS_LEFT_VALUE_EDGE 59
+#define STATUS_LABEL_GAP 2
 #define STATUS_QMK_Y 92
 #define STATUS_QMK_VERSION_SIZE 18
 #define STATUS_BUILD_Y 106
@@ -265,7 +266,6 @@ static bool    status_build_received;
 static bool    status_qmk_received;
 static char    status_qmk_version[STATUS_QMK_VERSION_SIZE];
 static uint16_t status_via_version;
-static char    status_build_date[STATUS_BUILD_FIELD_SIZE + 1];
 static char    status_build_hash[STATUS_BUILD_FIELD_SIZE + 1];
 static uint32_t status_key_count;
 
@@ -420,19 +420,15 @@ static void status_draw_tile(uint8_t index, const char *label, const char *value
 static void status_draw_left(uint8_t y, const char *label, const char *value) {
     draw_fill(0, y, STATUS_UPTIME_X - 1, y + font_small.height - 1, COLOR_BLACK);
     draw_text(STATUS_MARGIN, y, &font_small, label, COLOR_DIM, COLOR_BLACK);
-    draw_text(STATUS_LEFT_VALUE_EDGE - draw_text_width(&font_small, value), y, &font_small, value, COLOR_WHITE, COLOR_BLACK);
+    /* Right aligned, unless that would run into the label */
+    const int16_t aligned = STATUS_LEFT_VALUE_EDGE - draw_text_width(&font_small, value);
+    const int16_t minimum = STATUS_MARGIN + draw_text_width(&font_small, label) + STATUS_LABEL_GAP;
+    draw_text(aligned < minimum ? minimum : aligned, y, &font_small, value, COLOR_WHITE, COLOR_BLACK);
 }
 
 static void status_draw_right(uint8_t y, const char *label, const char *value) {
     draw_fill(STATUS_UPTIME_X, y, LAST_X, y + font_small.height - 1, COLOR_BLACK);
     draw_text(STATUS_UPTIME_X, y, &font_small, label, COLOR_DIM, COLOR_BLACK);
-    draw_right_aligned(y, value);
-}
-
-/* Counters are plain lines below the tiles */
-static void status_draw_line(uint8_t y, const char *label, const char *value) {
-    draw_fill(0, y, LAST_X, y + font_small.height - 1, COLOR_BLACK);
-    draw_text(STATUS_MARGIN, y, &font_small, label, COLOR_DIM, COLOR_BLACK);
     draw_right_aligned(y, value);
 }
 
@@ -468,16 +464,10 @@ static void status_draw_row(uint8_t row) {
             }
             status_draw_right(STATUS_QMK_Y, "VIA", text);
             break;
-        case STATUS_ROW_BUILD: {
-            /* The date arrives as YYYY-MM-DD and is shown as MM/DD/YY */
-            const char *iso    = status_build_date;
-            const char  date[] = {iso[5], iso[6], '/', iso[8], iso[9], '/', iso[2], iso[3], 0};
-            char        build[STATUS_BUILD_FIELD_SIZE * 2 + 3];
-            build[0] = 0;
-            append_text(append_text(append_text(build, date), "    "), status_build_hash);
-            status_draw_line(STATUS_BUILD_Y, "BUILD", build);
+        case STATUS_ROW_BUILD:
+            status_draw_left(STATUS_BUILD_Y, "BUILD", status_build_hash);
+            status_draw_right(STATUS_BUILD_Y, "LCD", LCD_VERSION);
             break;
-        }
         default:
             append_two_digits(append_text(append_two_digits(append_text(append_number(text, seconds / 3600), ":"), seconds / 60 % 60), ":"), seconds % 60);
             status_draw_right(STATUS_KEYS_Y, "UP", text);
@@ -1615,7 +1605,6 @@ void ui_on_versions(const char *qmk, uint16_t via) {
 
 void ui_on_build(const char *build) {
     for (uint8_t i = 0; i < STATUS_BUILD_FIELD_SIZE; i++) {
-        status_build_date[i] = build[i];
         status_build_hash[i] = build[STATUS_BUILD_FIELD_SIZE + i];
     }
     status_build_received = true;
