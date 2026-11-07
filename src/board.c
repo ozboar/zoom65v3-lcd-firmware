@@ -218,6 +218,10 @@ uint32_t board_millis(void) {
     return ticks;
 }
 
+void board_idle(void) {
+    __WFI();
+}
+
 void board_set_fast(bool fast) {
     static bool is_fast;
 

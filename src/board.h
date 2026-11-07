@@ -11,6 +11,9 @@ void     board_reset(void);
 /* Runs the CPU at 144 MHz instead of 72 MHz, for when drawing can't keep up */
 void     board_set_fast(bool fast);
 
+/* Stops the CPU until the next interrupt, at most 1 ms away. DMA keeps running */
+void board_idle(void);
+
 /*
  * Stops the clocks until a falling edge on the UART RX pin. SRAM and pin states are kept, and
  * board_millis() counts on using the RTC. Returns false without sleeping if the line is busy.

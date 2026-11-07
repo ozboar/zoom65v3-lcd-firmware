@@ -2,6 +2,7 @@
 #include "extflash.h"
 #include "lcd.h"
 #include "link.h"
+#include "media.h"
 #include "ui.h"
 
 /* Also gives the panel time to finish going to sleep */
@@ -21,6 +22,8 @@ int main(void) {
 
         if (ui_can_sleep() && link_quiet(SLEEP_QUIET_MS) && board_deep_sleep()) {
             link_on_wake();
+        } else if (link_rx_idle() && !media_upload_active()) {
+            board_idle();
         }
     }
 }
