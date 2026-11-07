@@ -3,7 +3,7 @@ accent 0
 status 0 0 0 82
 extra 4
 versions 0.34.7 12
-build 2026-11-06 v0.8.3
+build 2026-11-07 v0.8.4
 time 26 11 6 10 9 36
 system 62 55 1234
 weather 3 16 12 18
