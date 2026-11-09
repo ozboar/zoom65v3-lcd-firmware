@@ -97,15 +97,11 @@
  * slide behind it as the selection moves, and it slides away once the selection settles
  */
 #define MENU_SHOW_MS 800
-#define MENU_TOP(row) ((uint8_t)((row) * LCD_HEIGHT / MODE_COUNT))
 #define MENU_BAR_MARGIN 3
 #define MENU_WIDTH 59
 #define MENU_STRIP_WIDTH (LCD_WIDTH - MENU_WIDTH)
 #define MENU_SLIDE_MS 150
 #define PAGE_SLIDE_MS 150
-
-/* Changing the clock face or media setting slides the new one in from the right */
-#define TAB_SLIDE_MS 180
 
 /* Changing the accent fades the page from the old color to the new one */
 #define ACCENT_FADE_MS 250
@@ -133,14 +129,6 @@
 #define PEEK_SHOW_MS 800
 #define POPUP_FADE_MS 200
 #define POPUP_BLUR_SIDE (LCD_WIDTH / 2)
-
-/* Dots shown briefly when a page's setting changes */
-#define PILL_SHOW_MS 800
-#define PILL_Y 100
-#define PILL_HEIGHT 11
-#define PILL_PADDING 6
-#define PILL_DOT_SIZE 5
-#define PILL_DOT_GAP 4
 
 /* Image and GIF page */
 #define MEDIA_SETTING_IMAGE 0
@@ -257,6 +245,10 @@ static bool     clock_empty_drawn;
 static bool     menu_active;
 static uint8_t  menu_drawn;
 static uint8_t  menu_bar_from;
+static bool               menu_right;
+static const char *const *menu_names;
+static uint8_t            menu_count;
+static uint8_t            menu_target;
 static uint8_t  menu_marker[MENU_MARKER_WIDTH * MENU_MARKER_HEIGHT * 2];
 static uint32_t menu_timer;
 
@@ -286,24 +278,13 @@ static uint8_t band_shown;
 static uint8_t  menu_foreground[MENU_WIDTH * LCD_HEIGHT * 2] __attribute__((section(".media_ram")));
 static uint16_t menu_blur[2][BLUR_WIDTH * BLUR_HEIGHT] __attribute__((section(".media_ram")));
 
-/* What a slide brings in: big endian pixels at a place on the screen, black around them */
-typedef struct {
-    const uint8_t *pixels;
-    uint8_t        x;
-    uint8_t        y;
-    uint8_t        width;
-    uint8_t        height;
-} view_t;
+/* The accent fade, between the old view in the page frame and the new one in the GIF canvas */
+static bool     fade_active;
+static uint8_t  fade_drawn;
+static uint32_t fade_timer;
+static uint8_t  fade_top;
+static uint8_t  fade_bottom;
 
-static bool     tab_slide_active;
-static uint8_t  tab_slide_drawn;
-static uint32_t tab_slide_timer;
-static view_t   tab_slide_view;
-static uint8_t  tab_pill_count;
-static uint8_t  tab_pill_selected;
-static bool     tab_fade;
-static uint8_t  tab_fade_top;
-static uint8_t  tab_fade_bottom;
 typedef enum { POPUP_FADING_IN, POPUP_SHOWN, POPUP_FADING_OUT } popup_state_t;
 
 static bool          popup_active;
@@ -346,10 +327,6 @@ static int32_t  wpm_drawn;
 static uint32_t wpm_timer;
 static int32_t  bongo_time_drawn;
 static bool     blink_closed;
-static bool     pill_active;
-static uint8_t  pill_count;
-static uint8_t  pill_selected;
-static uint32_t pill_timer;
 static bool     media_show_gif;
 static uint8_t  media_setting;
 static bool     media_reactive;
@@ -1414,73 +1391,8 @@ static void clock_task(void) {
     }
 }
 
-static uint8_t pill_width(void) {
-    return (uint8_t)(PILL_PADDING * 2 + pill_count * PILL_DOT_SIZE + (pill_count - 1) * PILL_DOT_GAP);
-}
-
-static void pill_draw(void) {
-    const uint8_t width  = pill_width();
-    const uint8_t left   = (LCD_WIDTH - width) / 2;
-    const uint8_t right  = left + width - 1;
-    const uint8_t bottom = PILL_Y + PILL_HEIGHT - 1;
-
-    /* An edge of black keeps it apart from whatever is behind it */
-    draw_fill(left - 1, PILL_Y - 1, right + 1, bottom + 1, COLOR_BLACK);
-    draw_fill(left + 2, PILL_Y, right - 2, bottom, COLOR_GRID);
-    draw_fill(left, PILL_Y + 2, left + 1, bottom - 2, COLOR_GRID);
-    draw_fill(right - 1, PILL_Y + 2, right, bottom - 2, COLOR_GRID);
-    draw_fill(left + 1, PILL_Y + 1, left + 1, bottom - 1, COLOR_GRID);
-    draw_fill(right - 1, PILL_Y + 1, right - 1, bottom - 1, COLOR_GRID);
-
-    for (uint8_t dot = 0; dot < pill_count; dot++) {
-        const uint8_t  x     = (uint8_t)(left + PILL_PADDING + dot * (PILL_DOT_SIZE + PILL_DOT_GAP));
-        const uint8_t  y     = PILL_Y + (PILL_HEIGHT - PILL_DOT_SIZE) / 2;
-        const uint16_t color = dot == pill_selected ? accent_colors[accent] : COLOR_DIM;
-        draw_fill(x + 1, y, x + PILL_DOT_SIZE - 2, y + PILL_DOT_SIZE - 1, color);
-        draw_fill(x, y + 1, x + PILL_DOT_SIZE - 1, y + PILL_DOT_SIZE - 2, color);
-    }
-}
-
-static void pill_show(uint8_t count, uint8_t selected) {
-    pill_count    = count;
-    pill_selected = selected;
-    pill_timer    = board_millis();
-    pill_active   = true;
-    pill_draw();
-}
-
-/* The page comes back in place, with no clear, so nothing around the pill flickers */
-static void pill_hide(void) {
-    const uint8_t width = pill_width();
-    const uint8_t left  = (LCD_WIDTH - width) / 2;
-
-    pill_active = false;
-    if (mode == MODE_MEDIA) {
-        media_page_redraw();
-        return;
-    }
-    draw_fill(left - 1, PILL_Y - 1, left + width, PILL_Y + PILL_HEIGHT, COLOR_BLACK);
-    if (mode == MODE_CLOCK && (clock_face == CLOCK_FACE_SIMPLE || clock_face == CLOCK_FACE_DETAILED)) {
-        clock_draw_analog_dial(clock_face == CLOCK_FACE_DETAILED);
-        clock_drawn_seconds = 0xFFFFFFFFu;
-        clock_drawn_minute  = 0xFF;
-    }
-}
-
-static void pill_task(bool page_drew) {
-    if (!pill_active) {
-        return;
-    }
-    if (board_millis() - pill_timer >= PILL_SHOW_MS) {
-        pill_hide();
-    } else if (page_drew) {
-        pill_draw();
-    }
-}
-
 static void enter_mode(void) {
-    pill_active      = false;
-    tab_slide_active = false;
+    fade_active = false;
     clear_screen();
     switch (mode) {
         case MODE_BONGO:
@@ -1530,25 +1442,43 @@ static void bongo_time_task(void) {
     draw_text(BONGO_TIME_RIGHT - draw_text_width(&font_small, text), BONGO_TIME_Y, &font_small, text, COLOR_WHITE, COLOR_BLACK);
 }
 
-/* Drawn into the drawer's foreground in white on the see-through key. The highlight is added when drawing */
-static void menu_draw_row(uint8_t row) {
-    static const char *const names[MODE_COUNT] = {
-        [MODE_CLOCK] = "CLOCK", [MODE_BONGO] = "CAT", [MODE_GRAPH] = "WPM", [MODE_SYSTEM] = "SYSTEM",
-        [MODE_WEATHER] = "WEATHER", [MODE_RGB] = "RGB", [MODE_MEDIA] = "MEDIA", [MODE_STATUS] = "INFO",
-    };
-    const uint8_t top    = MENU_TOP(row);
-    const uint8_t bottom = MENU_TOP(row + 1) - 1;
+static const char *const page_names[MODE_COUNT] = {
+    [MODE_CLOCK] = "CLOCK", [MODE_BONGO] = "CAT", [MODE_GRAPH] = "WPM", [MODE_SYSTEM] = "SYSTEM",
+    [MODE_WEATHER] = "WEATHER", [MODE_RGB] = "RGB", [MODE_MEDIA] = "MEDIA", [MODE_STATUS] = "INFO",
+};
+static const char *const clock_face_names[CLOCK_FACE_COUNT] = {
+    [CLOCK_FACE_DETAILED] = "DETAILED", [CLOCK_FACE_SIMPLE] = "SIMPLE", [CLOCK_FACE_DIGITAL] = "DIGITAL", [CLOCK_FACE_BINARY] = "BINARY",
+};
+static const char *const media_setting_names[MEDIA_SETTING_COUNT] = {"IMAGE", "GIF", "REACTIVE"};
 
-    draw_fill(0, top, MENU_WIDTH - 2, bottom, MENU_KEY_CLEAR);
-    draw_text(MENU_TEXT_X, top + (bottom - top + 1 - font_small.height) / 2, &font_small, names[row], COLOR_WHITE, MENU_KEY_CLEAR);
+/* Rows are as tall as the page menu's, with a shorter list in the middle of the drawer */
+static uint8_t menu_row_top(uint8_t row) {
+    const uint8_t top = (uint8_t)((LCD_HEIGHT - menu_count * LCD_HEIGHT / MODE_COUNT) / 2);
+    return (uint8_t)(top + row * LCD_HEIGHT / MODE_COUNT);
 }
 
+/* The drawer's columns inside its divider, which faces the page */
+static uint8_t menu_inner_left(void) {
+    return menu_right ? 1 : 0;
+}
+
+/* How far the page behind moves: down the screen behind the page menu, across the strip behind the tabs */
+static uint8_t page_slide_distance(void) {
+    return menu_right ? MENU_STRIP_WIDTH : LCD_HEIGHT;
+}
+
+/* Drawn into the drawer's foreground in white on the see-through key. The highlight is added when drawing */
 static void menu_render_foreground(void) {
+    const uint8_t left = menu_inner_left();
+
     lcd_capture_begin(menu_foreground, 0, MENU_WIDTH);
-    for (uint8_t row = 0; row < MODE_COUNT; row++) {
-        menu_draw_row(row);
+    draw_fill(0, 0, MENU_WIDTH - 1, LAST_Y, MENU_KEY_CLEAR);
+    for (uint8_t row = 0; row < menu_count; row++) {
+        const uint8_t top    = menu_row_top(row);
+        const uint8_t height = menu_row_top(row + 1) - top;
+        draw_text(left + MENU_TEXT_X, top + (height - font_small.height) / 2, &font_small, menu_names[row], COLOR_WHITE, MENU_KEY_CLEAR);
     }
-    draw_fill(MENU_WIDTH - 1, 0, MENU_WIDTH - 1, LAST_Y, COLOR_GRID);
+    draw_fill(menu_right ? 0 : MENU_WIDTH - 1, 0, menu_right ? 0 : MENU_WIDTH - 1, LAST_Y, COLOR_GRID);
     lcd_capture_end();
 }
 
@@ -1672,11 +1602,31 @@ static void blur_scale_row(const uint16_t *blur, uint8_t blur_width, uint8_t blu
     }
 }
 
-/* Screen row y of the blurred page behind the drawer, following the pages as they slide */
+/*
+ * Screen row y of the blurred page behind the drawer, following the pages as they slide. Behind the
+ * tabs only the covered halves are kept, so they slide past each other in step with the strip
+ */
 static void menu_blur_line(uint8_t y, blur_line_t *line) {
     uint8_t band = band_shown;
     uint8_t row  = y;
 
+    if (page_slide_active && menu_right) {
+        blur_line_t   old;
+        blur_line_t   next;
+        const uint8_t offset = page_slide_drawn;
+
+        blur_scale_row(menu_blur[band], BLUR_WIDTH, BLUR_HEIGHT, y, 0, &old);
+        blur_scale_row(menu_blur[band ^ 1], BLUR_WIDTH, BLUR_HEIGHT, y, 0, &next);
+        for (uint8_t x = 0; x < MENU_WIDTH; x++) {
+            const uint8_t      from   = x + offset;
+            const blur_line_t *source = from < MENU_WIDTH ? &old : &next;
+            const uint8_t      column = from < MENU_WIDTH ? from : from - MENU_WIDTH;
+            line->r[x]                = source->r[column];
+            line->g[x]                = source->g[column];
+            line->b[x]                = source->b[column];
+        }
+        return;
+    }
     if (page_slide_active) {
         const uint8_t offset = page_slide_drawn;
         if (page_slide_down) {
@@ -1711,32 +1661,37 @@ static uint8_t text_level(uint16_t color) {
 
 /* Rows the highlight covers, moving from the row it left to the selected one as the page slides */
 static void menu_bar_span(uint8_t *top, uint8_t *bottom) {
-    const uint8_t progress   = page_slide_active ? page_slide_drawn : LCD_HEIGHT;
-    const int16_t from_top   = MENU_TOP(menu_bar_from);
-    const int16_t to_top     = MENU_TOP(menu_drawn);
-    const int16_t from_end   = MENU_TOP(menu_bar_from + 1) - 2;
-    const int16_t to_end     = MENU_TOP(menu_drawn + 1) - 2;
+    const uint8_t distance = page_slide_distance();
+    const uint8_t progress = page_slide_active ? page_slide_drawn : distance;
+    const int16_t from_top = menu_row_top(menu_bar_from);
+    const int16_t to_top   = menu_row_top(menu_drawn);
+    const int16_t from_end = menu_row_top(menu_bar_from + 1) - 2;
+    const int16_t to_end   = menu_row_top(menu_drawn + 1) - 2;
 
-    *top    = (uint8_t)(from_top + (to_top - from_top) * progress / LCD_HEIGHT);
-    *bottom = (uint8_t)(from_end + (to_end - from_end) * progress / LCD_HEIGHT);
+    *top    = (uint8_t)(from_top + (to_top - from_top) * progress / distance);
+    *bottom = (uint8_t)(from_end + (to_end - from_end) * progress / distance);
 }
 
 /*
- * The drawer with its right edge at column edge: its foreground over the blurred page, darkened,
+ * The drawer showing edge columns from its side: its foreground over the blurred page, darkened,
  * and the highlight over it tinted with the accent, turning the text on it black
  */
 static void menu_draw_at(uint8_t edge) {
-    const uint16_t       tint        = accent_colors[accent];
+    const uint16_t tint      = accent_colors[accent];
     /* The tint's share of the glass, in sixteenths of each channel */
-    const uint32_t       tint_r      = (uint32_t)(tint >> 11) * 16 * MENU_TINT_LEVEL;
-    const uint32_t       tint_g      = (uint32_t)((tint >> 5) & 0x3F) * 16 * MENU_TINT_LEVEL;
-    const uint32_t       tint_b      = (uint32_t)(tint & 0x1F) * 16 * MENU_TINT_LEVEL;
-    const uint8_t        shift       = MENU_WIDTH - edge;
-    const uint8_t        bar_left    = MENU_BAR_MARGIN;
-    const uint8_t        bar_right   = MENU_WIDTH - 2 - MENU_BAR_MARGIN;
-    uint8_t              bar_top;
-    uint8_t              bar_bottom;
-    blur_line_t          blur;
+    const uint32_t tint_r    = (uint32_t)(tint >> 11) * 16 * MENU_TINT_LEVEL;
+    const uint32_t tint_g    = (uint32_t)((tint >> 5) & 0x3F) * 16 * MENU_TINT_LEVEL;
+    const uint32_t tint_b    = (uint32_t)(tint & 0x1F) * 16 * MENU_TINT_LEVEL;
+    /* Where the drawer's first shown column is on screen, in the drawer, and in the part it covers */
+    const uint8_t  screen_x  = menu_right ? LCD_WIDTH - edge : 0;
+    const uint8_t  drawer_x  = menu_right ? 0 : MENU_WIDTH - edge;
+    const uint8_t  under_x   = menu_right ? MENU_WIDTH - edge : 0;
+    const uint8_t  bar_left  = menu_inner_left() + MENU_BAR_MARGIN;
+    const uint8_t  bar_right = menu_inner_left() + MENU_WIDTH - 2 - MENU_BAR_MARGIN;
+    const uint8_t  marker_x  = menu_inner_left() + MENU_MARKER_X;
+    uint8_t        bar_top;
+    uint8_t        bar_bottom;
+    blur_line_t    blur;
 
     if (!edge) {
         return;
@@ -1744,34 +1699,35 @@ static void menu_draw_at(uint8_t edge) {
     menu_bar_span(&bar_top, &bar_bottom);
     const uint8_t marker_y = bar_top + (bar_bottom - bar_top + 2 - font_small.height) / 2;
 
-    lcd_stream_begin(0, 0, edge - 1, LAST_Y);
+    lcd_stream_begin(screen_x, 0, screen_x + edge - 1, LAST_Y);
     for (uint8_t y = 0; y < LCD_HEIGHT; y++) {
-        const uint8_t *front   = menu_foreground + ((uint32_t)y * MENU_WIDTH + shift) * 2;
+        const uint8_t *front   = menu_foreground + ((uint32_t)y * MENU_WIDTH + drawer_x) * 2;
         const bool     on_bar  = y >= bar_top && y <= bar_bottom;
         const bool     on_edge = y == bar_top || y == bar_bottom;
         const bool     marked  = y >= marker_y && y < marker_y + font_small.height;
 
         menu_blur_line(y, &blur);
-        for (uint8_t x = 0; x < edge; x++, front += 2) {
+        for (uint8_t i = 0; i < edge; i++, front += 2) {
             const uint16_t color     = (uint16_t)((front[0] << 8) | front[1]);
-            const uint8_t  column    = x + shift;
-            const uint8_t  threshold = dither_bayer[y & 3][x & 3];
+            const uint8_t  column    = drawer_x + i;
+            const uint8_t  under     = under_x + i;
+            const uint8_t  threshold = dither_bayer[y & 3][(screen_x + i) & 3];
 
             if (on_bar && column >= bar_left && column <= bar_right && !(on_edge && (column == bar_left || column == bar_right))) {
                 uint8_t level = text_level(color);
-                if (marked && column >= MENU_MARKER_X && column < MENU_MARKER_X + MENU_MARKER_WIDTH) {
-                    const uint8_t mark = text_level(pixel_at(menu_marker, (uint32_t)(y - marker_y) * MENU_MARKER_WIDTH + column - MENU_MARKER_X));
+                if (marked && column >= marker_x && column < marker_x + MENU_MARKER_WIDTH) {
+                    const uint8_t mark = text_level(pixel_at(menu_marker, (uint32_t)(y - marker_y) * MENU_MARKER_WIDTH + column - marker_x));
                     level              = mark > level ? mark : level;
                 }
-                const uint16_t r     = dither_channel((uint16_t)((blur.r[x] * (FADE_LEVELS - MENU_TINT_LEVEL) + tint_r) / FADE_LEVELS), threshold, 0x1F);
-                const uint16_t g     = dither_channel((uint16_t)((blur.g[x] * (FADE_LEVELS - MENU_TINT_LEVEL) + tint_g) / FADE_LEVELS), threshold, 0x3F);
-                const uint16_t b     = dither_channel((uint16_t)((blur.b[x] * (FADE_LEVELS - MENU_TINT_LEVEL) + tint_b) / FADE_LEVELS), threshold, 0x1F);
+                const uint16_t r     = dither_channel((uint16_t)((blur.r[under] * (FADE_LEVELS - MENU_TINT_LEVEL) + tint_r) / FADE_LEVELS), threshold, 0x1F);
+                const uint16_t g     = dither_channel((uint16_t)((blur.g[under] * (FADE_LEVELS - MENU_TINT_LEVEL) + tint_g) / FADE_LEVELS), threshold, 0x3F);
+                const uint16_t b     = dither_channel((uint16_t)((blur.b[under] * (FADE_LEVELS - MENU_TINT_LEVEL) + tint_b) / FADE_LEVELS), threshold, 0x1F);
                 const uint16_t glass = (uint16_t)((r << 11) | (g << 5) | b);
                 lcd_stream_pixel(level ? mix_color(glass, COLOR_BLACK, level) : glass);
             } else if (color == MENU_KEY_CLEAR) {
-                const uint16_t r = dither_channel(blur.r[x] / 2, threshold, 0x1F);
-                const uint16_t g = dither_channel(blur.g[x] / 2, threshold, 0x3F);
-                const uint16_t b = dither_channel(blur.b[x] / 2, threshold, 0x1F);
+                const uint16_t r = dither_channel(blur.r[under] / 2, threshold, 0x1F);
+                const uint16_t g = dither_channel(blur.g[under] / 2, threshold, 0x3F);
+                const uint16_t b = dither_channel(blur.b[under] / 2, threshold, 0x1F);
                 lcd_stream_pixel((uint16_t)((r << 11) | (g << 5) | b));
             } else {
                 lcd_stream_pixel(color);
@@ -1847,16 +1803,12 @@ static bool page_task(void) {
         case MODE_RGB:
             rgb_task();
             break;
-        case MODE_CLOCK: {
-            const uint32_t drawn = clock_drawn_seconds;
+        case MODE_CLOCK:
             clock_task();
-            pill_task(clock_drawn_seconds != drawn);
             break;
-        }
         case MODE_MEDIA:
             media_page_task(media_playing());
             media_drew = media_page_take_drawn();
-            pill_task(media_drew);
             break;
         default:
             break;
@@ -1864,12 +1816,17 @@ static bool page_task(void) {
     return media_drew;
 }
 
+/* Starts capturing split at the drawer's edge: under is the part the drawer covers, strip the rest */
+static void capture_split_begin(uint8_t *under, uint8_t *strip) {
+    lcd_capture_begin(menu_right ? strip : under, menu_right ? under : strip, MENU_WIDTH);
+}
+
 /* Draws a page from scratch into memory, split at the drawer's edge. Its state then matches what was drawn */
-static void capture_page(uint8_t page, uint8_t *left, uint8_t *right) {
+static void capture_page(uint8_t page, uint8_t *under, uint8_t *strip) {
     const uint8_t shown = mode;
 
     mode = page;
-    lcd_capture_begin(left, right, MENU_WIDTH);
+    capture_split_begin(under, strip);
     enter_mode();
     page_task();
     battery_warn_task(true);
@@ -1877,12 +1834,25 @@ static void capture_page(uint8_t page, uint8_t *left, uint8_t *right) {
     mode = shown;
 }
 
+/* Draws the view on screen again. Entering the media page again would restart its GIF */
+static void render_shown(void) {
+    if (mode == MODE_MEDIA) {
+        clear_screen();
+        media_page_redraw();
+        media_page_task(false);
+    } else {
+        enter_mode();
+        page_task();
+    }
+    battery_warn_task(true);
+}
+
 static void menu_reset(void) {
     menu_active        = false;
     menu_edge          = 0;
     page_slide_pending = false;
     page_slide_active  = false;
-    tab_slide_active   = false;
+    fade_active   = false;
 }
 
 static void page_slide_draw(uint8_t offset) {
@@ -1890,7 +1860,15 @@ static void page_slide_draw(uint8_t offset) {
     const uint8_t *next = page_band(band_shown ^ 1);
     const uint16_t row  = MENU_STRIP_WIDTH * 2;
 
-    if (page_slide_down) {
+    if (menu_right) {
+        /* The new tab comes out from under the drawer */
+        if (offset < MENU_STRIP_WIDTH) {
+            lcd_blit(0, 0, MENU_STRIP_WIDTH - 1 - offset, LAST_Y, old + offset * 2, MENU_STRIP_WIDTH);
+        }
+        if (offset) {
+            lcd_blit(MENU_STRIP_WIDTH - offset, 0, MENU_STRIP_WIDTH - 1, LAST_Y, next, MENU_STRIP_WIDTH);
+        }
+    } else if (page_slide_down) {
         if (offset < LCD_HEIGHT) {
             lcd_blit(MENU_WIDTH, 0, LAST_X, LAST_Y - offset, old + offset * row, MENU_STRIP_WIDTH);
         }
@@ -1907,55 +1885,108 @@ static void page_slide_draw(uint8_t offset) {
     }
 }
 
+static void strip_draw(uint8_t band) {
+    const uint8_t x = menu_right ? 0 : MENU_WIDTH;
+    lcd_blit(x, 0, x + MENU_STRIP_WIDTH - 1, LAST_Y, page_band(band), MENU_STRIP_WIDTH);
+}
+
 static void page_slide_finish(void) {
     page_slide_active = false;
     band_shown ^= 1;
 }
 
-/*
- * The page behind the drawer moves to mode. Only the shown page is drawn off screen here, for the
- * drawer to open over at once. The new one is drawn when the drawer is open and it slides in
- */
-static void menu_change(uint8_t shown, bool down) {
-    if (!menu_active) {
-        pill_active = false;
-        band_shown  = 0;
-        capture_page(shown, menu_foreground, page_band(band_shown));
-        blur_image(menu_foreground, MENU_WIDTH, LCD_HEIGHT, menu_blur[band_shown]);
-        menu_drawn    = shown;
-        menu_bar_from = shown;
-        menu_render_foreground();
-        menu_active      = true;
-        menu_state       = MENU_OPENING;
-        menu_edge_from   = 0;
-        menu_slide_timer = board_millis();
-    } else if (menu_state == MENU_CLOSING) {
+/* Opens a drawer over the page, which the caller has captured into the foreground buffer and band 0 */
+static void menu_open(const char *const *names, uint8_t count, uint8_t selected) {
+    band_shown  = 0;
+    blur_image(menu_foreground, MENU_WIDTH, LCD_HEIGHT, menu_blur[band_shown]);
+    menu_names    = names;
+    menu_count    = count;
+    menu_drawn    = selected;
+    menu_bar_from = selected;
+    menu_render_foreground();
+    menu_active      = true;
+    menu_state       = MENU_OPENING;
+    menu_edge_from   = 0;
+    menu_slide_timer = board_millis();
+}
+
+/* The highlight moves to target, and the page behind slides once the drawer is open */
+static void menu_move(uint8_t target, bool down) {
+    if (menu_state == MENU_CLOSING) {
         menu_state       = MENU_OPENING;
         menu_edge_from   = menu_edge;
         menu_slide_timer = board_millis();
     }
-
     if (page_slide_active) {
-        lcd_blit(MENU_WIDTH, 0, LAST_X, LAST_Y, page_band(band_shown ^ 1), MENU_STRIP_WIDTH);
+        strip_draw(band_shown ^ 1);
         page_slide_finish();
         menu_draw_at(menu_edge);
     }
+    menu_target        = target;
     page_slide_down    = down;
     page_slide_pending = true;
     menu_timer         = board_millis();
 }
 
-/* The foreground buffer holds the new page's left part only until it is blurred */
+/*
+ * The page behind the page menu moves to mode. Only the shown page is drawn off screen here, for the
+ * drawer to open over at once. The new one is drawn when the drawer is open and it slides in
+ */
+static void menu_change(uint8_t shown, bool down) {
+    if (!menu_active) {
+        menu_right = false;
+        capture_page(shown, menu_foreground, page_band(0));
+        menu_open(page_names, MODE_COUNT, shown);
+    }
+    menu_move(mode, down);
+}
+
+/* Opens the tab drawer over the page as it is, before its setting changes */
+static void tabs_open(const char *const *names, uint8_t count, uint8_t current) {
+    if (menu_active) {
+        return;
+    }
+    menu_right = true;
+    capture_split_begin(menu_foreground, page_band(0));
+    render_shown();
+    lcd_capture_end();
+    menu_open(names, count, current);
+}
+
+/* Takes the drawer away at once, leaving the page as it is now */
+static void menu_dismiss(void) {
+    if (!menu_active) {
+        return;
+    }
+    capture_page(mode, page_band(band_shown ^ 1), page_band(band_shown));
+    lcd_blit(menu_right ? MENU_WIDTH : 0, 0, (menu_right ? MENU_WIDTH : 0) + MENU_WIDTH - 1, LAST_Y, page_band(band_shown ^ 1), MENU_WIDTH);
+    strip_draw(band_shown);
+    menu_reset();
+}
+
+/* The foreground buffer holds the new page's covered part only until it is blurred */
 static void page_slide_begin(void) {
     capture_page(mode, menu_foreground, page_band(band_shown ^ 1));
     blur_image(menu_foreground, MENU_WIDTH, LCD_HEIGHT, menu_blur[band_shown ^ 1]);
     menu_bar_from = menu_drawn;
-    menu_drawn    = mode;
+    menu_drawn    = menu_target;
     menu_render_foreground();
     page_slide_pending = false;
     page_slide_active  = true;
     page_slide_drawn   = 0;
     page_slide_timer   = board_millis();
+}
+
+/* Columns of the drawer's covered part newly uncovered as its edge moves from was to edge */
+static void menu_uncover(uint8_t was, uint8_t edge) {
+    const uint8_t *under = page_band(band_shown ^ 1);
+
+    if (menu_right) {
+        const uint8_t from = LCD_WIDTH - was;
+        lcd_blit(from, 0, LAST_X - edge, LAST_Y, under + (from - MENU_WIDTH) * 2, MENU_WIDTH);
+    } else {
+        lcd_blit(edge, 0, was - 1, LAST_Y, under + edge * 2, MENU_WIDTH);
+    }
 }
 
 static void menu_task(void) {
@@ -1978,20 +2009,21 @@ static void menu_task(void) {
                 page_slide_begin();
             }
             if (page_slide_active) {
-                const uint8_t offset = ease_out(board_millis() - page_slide_timer, PAGE_SLIDE_MS, LCD_HEIGHT);
+                const uint8_t distance = page_slide_distance();
+                const uint8_t offset   = ease_out(board_millis() - page_slide_timer, PAGE_SLIDE_MS, distance);
                 if (offset != page_slide_drawn) {
                     page_slide_drawn = offset;
                     page_slide_draw(offset);
                     menu_draw_at(MENU_WIDTH);
                 }
-                if (offset == LCD_HEIGHT) {
+                if (offset == distance) {
                     page_slide_finish();
                 }
             } else if (now - menu_timer >= MENU_SHOW_MS) {
                 /* The whole page afresh, as the strip on screen was drawn when the selection moved */
                 capture_page(mode, page_band(band_shown ^ 1), page_band(band_shown));
                 blur_image(page_band(band_shown ^ 1), MENU_WIDTH, LCD_HEIGHT, menu_blur[band_shown]);
-                lcd_blit(MENU_WIDTH, 0, LAST_X, LAST_Y, page_band(band_shown), MENU_STRIP_WIDTH);
+                strip_draw(band_shown);
                 menu_draw_at(menu_edge);
                 menu_state       = MENU_CLOSING;
                 menu_edge_from   = menu_edge;
@@ -2001,7 +2033,7 @@ static void menu_task(void) {
         case MENU_CLOSING: {
             const uint8_t edge = menu_edge_from - ease_out(now - menu_slide_timer, MENU_SLIDE_MS, menu_edge_from);
             if (edge != menu_edge) {
-                lcd_blit(edge, 0, menu_edge - 1, LAST_Y, page_band(band_shown ^ 1) + edge * 2, MENU_WIDTH);
+                menu_uncover(menu_edge, edge);
                 menu_edge = edge;
                 menu_draw_at(edge);
             }
@@ -2013,78 +2045,30 @@ static void menu_task(void) {
     }
 }
 
-/* Columns from to to of a view, drawn from screen column x. Whatever the view does not cover is black */
-static void view_draw_columns(const view_t *view, uint8_t from, uint8_t to, uint8_t x) {
-    const int16_t shift  = (int16_t)x - from;
-    const uint8_t last   = view->x + view->width - 1;
-    const uint8_t bottom = view->y + view->height;
-    const uint8_t left   = from > view->x ? from : view->x;
-    const uint8_t right  = to < last ? to : last;
-
-    if (left > right) {
-        draw_fill(x, 0, x + (to - from), LAST_Y, COLOR_BLACK);
-        return;
-    }
-    if (left > from) {
-        draw_fill(x, 0, left - 1 + shift, LAST_Y, COLOR_BLACK);
-    }
-    if (right < to) {
-        draw_fill(right + 1 + shift, 0, to + shift, LAST_Y, COLOR_BLACK);
-    }
-    if (view->y) {
-        draw_fill(left + shift, 0, right + shift, view->y - 1, COLOR_BLACK);
-    }
-    if (bottom < LCD_HEIGHT) {
-        draw_fill(left + shift, bottom, right + shift, LAST_Y, COLOR_BLACK);
-    }
-    lcd_blit(left + shift, view->y, right + shift, bottom - 1, view->pixels + (left - view->x) * 2, view->width);
-}
-
-/* Captures the view on screen as the old side of a tab slide, finishing any slide still running */
-static void tab_slide_prepare(void) {
-    if (tab_slide_active) {
-        view_draw_columns(&tab_slide_view, 0, LAST_X, 0);
-        tab_slide_active = false;
+/* Captures the view on screen whole, as what a fade or popup starts from, finishing any fade still running */
+static void fade_prepare(void) {
+    if (fade_active) {
+        lcd_blit(0, 0, LAST_X, LAST_Y, gif_scratch(), LCD_WIDTH);
+        fade_active = false;
     }
     lcd_capture_begin(page_frame, 0, LCD_WIDTH);
-    if (mode == MODE_MEDIA) {
-        /* Entering the page again would restart the GIF */
-        clear_screen();
-        media_page_redraw();
-        media_page_task(false);
-    } else {
-        enter_mode();
-        page_task();
-    }
-    battery_warn_task(true);
+    render_shown();
     lcd_capture_end();
 }
 
-/* Captures the page as it now is into the GIF canvas, which no GIF is using, as the new side */
-static void tab_slide_capture_page(void) {
-    uint8_t *const scratch = gif_scratch();
-
-    lcd_capture_begin(scratch, 0, LCD_WIDTH);
+/* Captures the page as it now is into the GIF canvas, which no GIF is using, as what a fade ends on */
+static void fade_capture_page(void) {
+    lcd_capture_begin(gif_scratch(), 0, LCD_WIDTH);
     enter_mode();
     page_task();
     battery_warn_task(true);
     lcd_capture_end();
-    tab_slide_view = (view_t){scratch, 0, 0, LCD_WIDTH, LCD_HEIGHT};
-}
-
-static void tab_slide_start(uint8_t pill_count, uint8_t pill_selected) {
-    tab_slide_active  = true;
-    tab_fade          = false;
-    tab_slide_drawn   = 0;
-    tab_slide_timer   = board_millis();
-    tab_pill_count    = pill_count;
-    tab_pill_selected = pill_selected;
 }
 
 /* Fades from the captured old view to the new one, over the rows where they differ */
-static void tab_fade_start(void) {
-    const uint8_t *next = tab_slide_view.pixels;
-    uint8_t        top  = LCD_HEIGHT;
+static void fade_start(void) {
+    const uint8_t *next   = gif_scratch();
+    uint8_t        top    = LCD_HEIGHT;
     uint8_t        bottom = 0;
 
     for (uint8_t y = 0; y < LCD_HEIGHT; y++) {
@@ -2096,51 +2080,28 @@ static void tab_fade_start(void) {
     if (top > bottom) {
         return;
     }
-    tab_slide_active = true;
-    tab_fade         = true;
-    tab_fade_top     = top;
-    tab_fade_bottom  = bottom;
-    tab_slide_drawn  = 0;
-    tab_slide_timer  = board_millis();
+    fade_active = true;
+    fade_top    = top;
+    fade_bottom = bottom;
+    fade_drawn  = 0;
+    fade_timer  = board_millis();
 }
 
-static void tab_fade_task(void) {
-    const uint8_t level = ease_out(board_millis() - tab_slide_timer, ACCENT_FADE_MS, FADE_LEVELS);
+static void fade_task(void) {
+    const uint8_t level = ease_out(board_millis() - fade_timer, ACCENT_FADE_MS, FADE_LEVELS);
 
-    if (level != tab_slide_drawn) {
-        tab_slide_drawn = level;
-        lcd_stream_begin(0, tab_fade_top, LAST_X, tab_fade_bottom);
-        for (uint32_t i = (uint32_t)tab_fade_top * LCD_WIDTH; i < (uint32_t)(tab_fade_bottom + 1) * LCD_WIDTH; i++) {
+    if (level != fade_drawn) {
+        fade_drawn = level;
+        lcd_stream_begin(0, fade_top, LAST_X, fade_bottom);
+        for (uint32_t i = (uint32_t)fade_top * LCD_WIDTH; i < (uint32_t)(fade_bottom + 1) * LCD_WIDTH; i++) {
             const uint16_t from = pixel_at(page_frame, i);
-            const uint16_t to   = pixel_at(tab_slide_view.pixels, i);
+            const uint16_t to   = pixel_at(gif_scratch(), i);
             lcd_stream_pixel(from == to ? to : mix_color(from, to, level));
         }
         lcd_stream_end();
     }
     if (level == FADE_LEVELS) {
-        tab_slide_active = false;
-    }
-}
-
-static void tab_slide_task(void) {
-    if (tab_fade) {
-        tab_fade_task();
-        return;
-    }
-    const uint8_t offset = ease_out(board_millis() - tab_slide_timer, TAB_SLIDE_MS, LCD_WIDTH);
-
-    if (offset != tab_slide_drawn) {
-        tab_slide_drawn = offset;
-        if (offset < LCD_WIDTH) {
-            lcd_blit(0, 0, LAST_X - offset, LAST_Y, page_frame + offset * 2, LCD_WIDTH);
-        }
-        if (offset) {
-            view_draw_columns(&tab_slide_view, 0, offset - 1, LCD_WIDTH - offset);
-        }
-    }
-    if (offset == LCD_WIDTH) {
-        tab_slide_active = false;
-        pill_show(tab_pill_count, tab_pill_selected);
+        fade_active = false;
     }
 }
 
@@ -2219,7 +2180,7 @@ static void popup_draw(uint8_t level) {
 
 /* The view on screen is kept whole for fading back to, and blurred for the glass */
 static void popup_begin(uint8_t page) {
-    tab_slide_prepare();
+    fade_prepare();
     /* Capturing it entered the page again, which is not a reason for the cat to greet */
     intro_taps = 0;
     blur_image(page_frame, LCD_WIDTH, LCD_HEIGHT, popup_blur);
@@ -2329,8 +2290,8 @@ void ui_task(void) {
         popup_task();
         return;
     }
-    if (tab_slide_active) {
-        tab_slide_task();
+    if (fade_active) {
+        fade_task();
         return;
     }
 
@@ -2436,7 +2397,6 @@ static void upload_draw(void) {
 void ui_upload_begin(bool gif) {
     upload_gif     = gif;
     upload_percent = 0;
-    pill_active    = false;
     popup_active   = false;
     menu_reset();
     if (powered) {
@@ -2471,38 +2431,17 @@ void ui_on_media(uint8_t setting) {
     }
     /* The page under a popup would be left showing the old setting */
     popup_end();
-    const bool visible = powered && mode == MODE_MEDIA && !waiting_for_mode && !menu_active && !media_upload_active();
+    const bool visible = powered && mode == MODE_MEDIA && !waiting_for_mode && (!menu_active || menu_right) && !media_upload_active();
 
     if (visible) {
-        tab_slide_prepare();
+        tabs_open(media_setting_names, MEDIA_SETTING_COUNT, media_setting);
     }
     media_setting  = setting;
     media_reactive = setting == MEDIA_SETTING_REACTIVE;
-    if ((setting != MEDIA_SETTING_IMAGE) != media_show_gif) {
-        media_show_gif = setting != MEDIA_SETTING_IMAGE;
-        if (visible) {
-            media_page_enter(media_show_gif);
-        }
+    media_show_gif = setting != MEDIA_SETTING_IMAGE;
+    if (visible) {
+        menu_move(setting, true);
     }
-    if (!visible) {
-        return;
-    }
-
-    if (!media_show_gif) {
-        tab_slide_capture_page();
-    } else {
-        /* A GIF decodes onto the canvas, so the slide brings in the canvas itself */
-        lcd_capture_begin(0, 0, LCD_WIDTH);
-        media_page_task(true);
-        lcd_capture_end();
-        if (!media_page_gif_rect(&tab_slide_view.x, &tab_slide_view.y, &tab_slide_view.width, &tab_slide_view.height)) {
-            enter_mode();
-            pill_show(MEDIA_SETTING_COUNT, setting);
-            return;
-        }
-        tab_slide_view.pixels = gif_canvas();
-    }
-    tab_slide_start(MEDIA_SETTING_COUNT, setting);
 }
 
 void ui_on_mode(uint8_t value) {
@@ -2513,6 +2452,9 @@ void ui_on_mode(uint8_t value) {
     }
     /* The menu opens over the page itself */
     popup_end();
+    if (menu_active && menu_right) {
+        menu_dismiss();
+    }
     const bool first_mode = waiting_for_mode;
     /* Wrapping around counts as a step, as the keyboard only steps one page at a time */
     const bool down = value == (mode + 1) % MODE_COUNT || (value != (mode + MODE_COUNT - 1) % MODE_COUNT && value > mode);
@@ -2590,7 +2532,7 @@ void ui_on_brightness(uint8_t percent) {
 }
 
 bool ui_needs_speed(void) {
-    if (powered && (menu_active || popup_active || tab_slide_active)) {
+    if (powered && (menu_active || popup_active || fade_active)) {
         return true;
     }
     return powered && mode == MODE_MEDIA && media_show_gif && !waiting_for_mode && media_playing();
@@ -2609,14 +2551,14 @@ void ui_on_accent(uint8_t value) {
     const bool visible = powered && mode != MODE_MEDIA && !waiting_for_mode && !menu_active && !media_upload_active();
 
     if (visible) {
-        tab_slide_prepare();
+        fade_prepare();
     }
     accent = value;
     if (visible) {
-        tab_slide_capture_page();
+        fade_capture_page();
         /* A new color is not a new page, so the cat skips its greeting taps */
         intro_taps = 0;
-        tab_fade_start();
+        fade_start();
     }
 }
 
@@ -2642,15 +2584,14 @@ void ui_on_clock_face(uint8_t value) {
         return;
     }
     popup_end();
-    const bool visible = mode == MODE_CLOCK && powered && !waiting_for_mode && !menu_active && !media_upload_active();
+    const bool visible = mode == MODE_CLOCK && powered && !waiting_for_mode && (!menu_active || menu_right) && !media_upload_active();
 
     if (visible) {
-        tab_slide_prepare();
+        tabs_open(clock_face_names, CLOCK_FACE_COUNT, clock_face);
     }
     clock_face = value;
     if (visible) {
-        tab_slide_capture_page();
-        tab_slide_start(CLOCK_FACE_COUNT, value);
+        menu_move(value, true);
     }
 }
 
