@@ -94,6 +94,9 @@
 #define MENU_TOP(row) ((uint8_t)((row) * LCD_HEIGHT / MODE_COUNT))
 #define MENU_BAR_MARGIN 3
 
+/* A page shown briefly without the menu, then the previous page returns */
+#define PEEK_SHOW_MS 800
+
 /* Dots shown briefly when a page's setting changes */
 #define PILL_SHOW_MS 800
 #define PILL_Y 100
@@ -217,6 +220,9 @@ static bool     clock_empty_drawn;
 static bool     menu_active;
 static uint8_t  menu_drawn;
 static uint32_t menu_timer;
+static bool     peek_active;
+static uint8_t  peek_return;
+static uint32_t peek_timer;
 static bool     waiting_for_mode = true;
 static uint32_t start_time;
 static bool     powered = true;
@@ -1524,6 +1530,14 @@ void ui_task(void) {
 
     history_task();
 
+    if (peek_active && board_millis() - peek_timer >= PEEK_SHOW_MS) {
+        peek_active = false;
+        mode        = peek_return;
+        if (!media_upload_active()) {
+            enter_mode();
+        }
+    }
+
     if (media_upload_active()) {
         return;
     }
@@ -1727,6 +1741,14 @@ void ui_on_media(uint8_t setting) {
 }
 
 void ui_on_mode(uint8_t value) {
+    /* The keyboard keeps sending its mode, which should not end a peek */
+    if (peek_active) {
+        if (value == peek_return) {
+            return;
+        }
+        peek_active = false;
+        mode        = peek_return;
+    }
     if (value >= MODE_COUNT || (value == mode && !waiting_for_mode)) {
         return;
     }
@@ -1744,9 +1766,35 @@ void ui_on_mode(uint8_t value) {
     }
 }
 
+void ui_on_peek(uint8_t value) {
+    if (value >= MODE_COUNT || waiting_for_mode || !powered) {
+        return;
+    }
+    if (!peek_active) {
+        if (value == mode) {
+            return;
+        }
+        peek_active = true;
+        peek_return = mode;
+    }
+    peek_timer = board_millis();
+    if (value == mode) {
+        return;
+    }
+    mode        = value;
+    menu_active = false;
+    if (!media_upload_active()) {
+        enter_mode();
+    }
+}
+
 void ui_on_power(bool on) {
     if (on == powered) {
         return;
+    }
+    if (peek_active) {
+        peek_active = false;
+        mode        = peek_return;
     }
     powered     = on;
     menu_active = false;

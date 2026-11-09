@@ -68,6 +68,7 @@ enum {
     UI_MEDIA = 0x12,
     UI_BRIGHTNESS = 0x13,
     UI_WAKE = 0x14,
+    UI_PEEK = 0x15,
 };
 
 typedef enum { RX_IDLE, RX_GROUP, RX_COMMAND, RX_PAYLOAD, RX_SKIP, RX_SKIP_OK, RX_PING, RX_PACKET_INDEX, RX_PACKET } rx_state_t;
@@ -176,6 +177,7 @@ static int payload_length(uint8_t cmd) {
         case UI_ACCENT:
         case UI_UNITS:
         case UI_MODE:
+        case UI_PEEK:
         case UI_POWER:
         case UI_BACKLIGHT:
         case UI_BRIGHTNESS:
@@ -302,6 +304,9 @@ static void dispatch(void) {
             break;
         case UI_MODE:
             ui_on_mode(payload[0]);
+            break;
+        case UI_PEEK:
+            ui_on_peek(payload[0]);
             break;
         case UI_POWER:
             ui_on_power(payload[0] != 0);

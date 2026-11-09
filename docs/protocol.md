@@ -28,6 +28,7 @@ Frames are `A5 03 <command> <payload>`. They are not acknowledged, so sending ne
 | `12` | `setting` | Image and GIF page: 0 image, 1 GIF, 2 GIF that only plays while typing. Changing it while its page is open shows the selection as dots |
 | `13` | `percent` | Backlight brightness, 0-100. Stays off while `07` has it off |
 | `14` | None | Wake the panel and reply `5A`, see below |
+| `15` | `mode` | Show a page without the menu for 800 ms, then return to the current mode. Repeating it restarts the time, and `05` with the current mode does not end it |
 
 `device` is 0 for USB, 1-5 for BT1-BT5 and 6 for 2.4G.
 

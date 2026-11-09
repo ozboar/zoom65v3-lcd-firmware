@@ -12,6 +12,9 @@ void ui_on_wpm(uint16_t wpm);
 void ui_on_status(uint8_t device, uint8_t layer, bool caps, uint8_t battery);
 void ui_on_keys(uint8_t row, uint16_t state);
 void ui_on_mode(uint8_t mode);
+
+/* Shows a page briefly without the menu, then returns to the current one */
+void ui_on_peek(uint8_t mode);
 void ui_on_power(bool on);
 void ui_on_backlight(bool on);
 void ui_on_brightness(uint8_t percent);
