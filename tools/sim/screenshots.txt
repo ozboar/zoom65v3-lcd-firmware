@@ -3,7 +3,7 @@ accent 0
 status 0 0 0 82
 extra 4
 versions 0.34.7 12
-build 2026-11-07 v0.8.4
+build 2026-11-09 v0.8.6
 time 26 11 6 10 9 36
 system 62 55 1234
 weather 3 16 12 18
@@ -17,7 +17,8 @@ wait 100
 wait 1000
 shot clock-simple
 face 2
-wait 100
+wait 400
+shot tabs
 wait 1000
 shot clock-digital
 face 3
@@ -30,7 +31,7 @@ wait 1000
 shot clock-detailed
 
 mode 1
-wait 100
+wait 400
 shot menu
 wait 1000
 media 1
@@ -82,6 +83,9 @@ shot system
 mode 5
 wait 1000
 shot weather
+peek 6
+wait 300
+shot popup
 
 mode 6
 wait 1000
