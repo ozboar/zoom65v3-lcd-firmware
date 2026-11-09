@@ -114,10 +114,11 @@
 
 /*
  * The drawer is frosted glass: the page under it shows through blurred and darkened, and through
- * the highlight tinted with the accent. Foreground pixels in these key colors are see-through
+ * the highlight tinted with the accent. Foreground pixels in the key color are see-through
  */
 #define MENU_KEY_CLEAR 0x0001
-#define MENU_KEY_TINT 0x0020
+#define MENU_MARKER_WIDTH 6
+#define MENU_MARKER_HEIGHT 16
 #define MENU_TINT_LEVEL 24
 #define BLUR_WIDTH ((MENU_WIDTH + 1) / 2)
 #define BLUR_HEIGHT (LCD_HEIGHT / 2)
@@ -249,6 +250,8 @@ static bool     clock_dial_drawn;
 static bool     clock_empty_drawn;
 static bool     menu_active;
 static uint8_t  menu_drawn;
+static uint8_t  menu_bar_from;
+static uint8_t  menu_marker[MENU_MARKER_WIDTH * MENU_MARKER_HEIGHT * 2];
 static uint32_t menu_timer;
 
 typedef enum { MENU_OPENING, MENU_OPEN, MENU_CLOSING } menu_state_t;
@@ -1514,37 +1517,33 @@ static void bongo_time_task(void) {
     draw_text(BONGO_TIME_RIGHT - draw_text_width(&font_small, text), BONGO_TIME_Y, &font_small, text, COLOR_WHITE, COLOR_BLACK);
 }
 
-/* Drawn into the drawer's foreground, where the two key colors let the blurred page show through */
-static void menu_draw_row(uint8_t row, bool selected) {
+/* Drawn into the drawer's foreground in white on the see-through key. The highlight is added when drawing */
+static void menu_draw_row(uint8_t row) {
     static const char *const names[MODE_COUNT] = {
         [MODE_CLOCK] = "CLOCK", [MODE_BONGO] = "CAT", [MODE_GRAPH] = "WPM", [MODE_SYSTEM] = "SYSTEM",
         [MODE_WEATHER] = "WEATHER", [MODE_RGB] = "RGB", [MODE_MEDIA] = "MEDIA", [MODE_STATUS] = "INFO",
     };
-    const uint8_t  top    = MENU_TOP(row);
-    const uint8_t  bottom = MENU_TOP(row + 1) - 1;
-    const uint8_t  y      = top + (bottom - top + 1 - font_small.height) / 2;
-    const uint8_t  right  = MENU_WIDTH - 2 - MENU_BAR_MARGIN;
-    const uint16_t bg     = selected ? MENU_KEY_TINT : MENU_KEY_CLEAR;
-    const uint16_t fg     = selected ? COLOR_BLACK : COLOR_WHITE;
+    const uint8_t top    = MENU_TOP(row);
+    const uint8_t bottom = MENU_TOP(row + 1) - 1;
 
     draw_fill(0, top, MENU_WIDTH - 2, bottom, MENU_KEY_CLEAR);
-    if (selected) {
-        draw_fill(MENU_BAR_MARGIN, top, right, bottom - 1, bg);
-        draw_fill(MENU_BAR_MARGIN, top, MENU_BAR_MARGIN, top, MENU_KEY_CLEAR);
-        draw_fill(right, top, right, top, MENU_KEY_CLEAR);
-        draw_fill(MENU_BAR_MARGIN, bottom - 1, MENU_BAR_MARGIN, bottom - 1, MENU_KEY_CLEAR);
-        draw_fill(right, bottom - 1, right, bottom - 1, MENU_KEY_CLEAR);
-        draw_text(MENU_MARKER_X, y, &font_small, ">", fg, bg);
-    }
-    draw_text(MENU_TEXT_X, y, &font_small, names[row], fg, bg);
+    draw_text(MENU_TEXT_X, top + (bottom - top + 1 - font_small.height) / 2, &font_small, names[row], COLOR_WHITE, MENU_KEY_CLEAR);
 }
 
 static void menu_render_foreground(void) {
     lcd_capture_begin(menu_foreground, 0, MENU_WIDTH);
     for (uint8_t row = 0; row < MODE_COUNT; row++) {
-        menu_draw_row(row, row == menu_drawn);
+        menu_draw_row(row);
     }
     draw_fill(MENU_WIDTH - 1, 0, MENU_WIDTH - 1, LAST_Y, COLOR_GRID);
+    lcd_capture_end();
+}
+
+/* The highlight's marker, which moves with it */
+static void menu_render_marker(void) {
+    lcd_capture_begin(menu_marker, 0, MENU_MARKER_WIDTH);
+    draw_fill(0, 0, MENU_MARKER_WIDTH - 1, font_small.height - 1, MENU_KEY_CLEAR);
+    draw_text(0, 0, &font_small, ">", COLOR_WHITE, MENU_KEY_CLEAR);
     lcd_capture_end();
 }
 
@@ -1681,7 +1680,27 @@ static uint16_t dither_channel(uint16_t sixteenths, uint8_t threshold, uint16_t 
     return value < max ? value : max;
 }
 
-/* The drawer with its right edge at column edge: its foreground over the blurred page, darkened or tinted */
+/* How much of a foreground pixel is white text, from 0 to FADE_LEVELS */
+static uint8_t text_level(uint16_t color) {
+    return color == MENU_KEY_CLEAR ? 0 : (uint8_t)((((color >> 5) & 0x3F) * FADE_LEVELS + 31) / 63);
+}
+
+/* Rows the highlight covers, moving from the row it left to the selected one as the page slides */
+static void menu_bar_span(uint8_t *top, uint8_t *bottom) {
+    const uint8_t progress   = page_slide_active ? page_slide_drawn : LCD_HEIGHT;
+    const int16_t from_top   = MENU_TOP(menu_bar_from);
+    const int16_t to_top     = MENU_TOP(menu_drawn);
+    const int16_t from_end   = MENU_TOP(menu_bar_from + 1) - 2;
+    const int16_t to_end     = MENU_TOP(menu_drawn + 1) - 2;
+
+    *top    = (uint8_t)(from_top + (to_top - from_top) * progress / LCD_HEIGHT);
+    *bottom = (uint8_t)(from_end + (to_end - from_end) * progress / LCD_HEIGHT);
+}
+
+/*
+ * The drawer with its right edge at column edge: its foreground over the blurred page, darkened,
+ * and the highlight over it tinted with the accent, turning the text on it black
+ */
 static void menu_draw_at(uint8_t edge) {
     static const uint8_t bayer[4][4] = {{0, 8, 2, 10}, {12, 4, 14, 6}, {3, 11, 1, 9}, {15, 7, 13, 5}};
     const uint16_t       tint        = accent_colors[accent];
@@ -1690,29 +1709,46 @@ static void menu_draw_at(uint8_t edge) {
     const uint32_t       tint_g      = (uint32_t)((tint >> 5) & 0x3F) * 16 * MENU_TINT_LEVEL;
     const uint32_t       tint_b      = (uint32_t)(tint & 0x1F) * 16 * MENU_TINT_LEVEL;
     const uint8_t        shift       = MENU_WIDTH - edge;
+    const uint8_t        bar_left    = MENU_BAR_MARGIN;
+    const uint8_t        bar_right   = MENU_WIDTH - 2 - MENU_BAR_MARGIN;
+    uint8_t              bar_top;
+    uint8_t              bar_bottom;
     blur_line_t          blur;
 
     if (!edge) {
         return;
     }
+    menu_bar_span(&bar_top, &bar_bottom);
+    const uint8_t marker_y = bar_top + (bar_bottom - bar_top + 2 - font_small.height) / 2;
+
     lcd_stream_begin(0, 0, edge - 1, LAST_Y);
     for (uint8_t y = 0; y < LCD_HEIGHT; y++) {
-        const uint8_t *front = menu_foreground + ((uint32_t)y * MENU_WIDTH + shift) * 2;
+        const uint8_t *front   = menu_foreground + ((uint32_t)y * MENU_WIDTH + shift) * 2;
+        const bool     on_bar  = y >= bar_top && y <= bar_bottom;
+        const bool     on_edge = y == bar_top || y == bar_bottom;
+        const bool     marked  = y >= marker_y && y < marker_y + font_small.height;
 
         menu_blur_line(y, &blur);
         for (uint8_t x = 0; x < edge; x++, front += 2) {
             const uint16_t color     = (uint16_t)((front[0] << 8) | front[1]);
+            const uint8_t  column    = x + shift;
             const uint8_t  threshold = bayer[y & 3][x & 3];
 
-            if (color == MENU_KEY_CLEAR) {
+            if (on_bar && column >= bar_left && column <= bar_right && !(on_edge && (column == bar_left || column == bar_right))) {
+                uint8_t level = text_level(color);
+                if (marked && column >= MENU_MARKER_X && column < MENU_MARKER_X + MENU_MARKER_WIDTH) {
+                    const uint8_t mark = text_level(pixel_at(menu_marker, (uint32_t)(y - marker_y) * MENU_MARKER_WIDTH + column - MENU_MARKER_X));
+                    level              = mark > level ? mark : level;
+                }
+                const uint16_t r     = dither_channel((uint16_t)((blur.r[x] * (FADE_LEVELS - MENU_TINT_LEVEL) + tint_r) / FADE_LEVELS), threshold, 0x1F);
+                const uint16_t g     = dither_channel((uint16_t)((blur.g[x] * (FADE_LEVELS - MENU_TINT_LEVEL) + tint_g) / FADE_LEVELS), threshold, 0x3F);
+                const uint16_t b     = dither_channel((uint16_t)((blur.b[x] * (FADE_LEVELS - MENU_TINT_LEVEL) + tint_b) / FADE_LEVELS), threshold, 0x1F);
+                const uint16_t glass = (uint16_t)((r << 11) | (g << 5) | b);
+                lcd_stream_pixel(level ? mix_color(glass, COLOR_BLACK, level) : glass);
+            } else if (color == MENU_KEY_CLEAR) {
                 const uint16_t r = dither_channel(blur.r[x] / 2, threshold, 0x1F);
                 const uint16_t g = dither_channel(blur.g[x] / 2, threshold, 0x3F);
                 const uint16_t b = dither_channel(blur.b[x] / 2, threshold, 0x1F);
-                lcd_stream_pixel((uint16_t)((r << 11) | (g << 5) | b));
-            } else if (color == MENU_KEY_TINT) {
-                const uint16_t r = dither_channel((uint16_t)((blur.r[x] * (FADE_LEVELS - MENU_TINT_LEVEL) + tint_r) / FADE_LEVELS), threshold, 0x1F);
-                const uint16_t g = dither_channel((uint16_t)((blur.g[x] * (FADE_LEVELS - MENU_TINT_LEVEL) + tint_g) / FADE_LEVELS), threshold, 0x3F);
-                const uint16_t b = dither_channel((uint16_t)((blur.b[x] * (FADE_LEVELS - MENU_TINT_LEVEL) + tint_b) / FADE_LEVELS), threshold, 0x1F);
                 lcd_stream_pixel((uint16_t)((r << 11) | (g << 5) | b));
             } else {
                 lcd_stream_pixel(color);
@@ -1725,6 +1761,7 @@ static void menu_draw_at(uint8_t edge) {
 /* The screen stays black until the keyboard says which mode to show, so no other mode flashes up */
 void ui_init(void) {
     start_time = board_millis();
+    menu_render_marker();
 }
 
 /* In reactive mode the GIF only plays while keys are held or were just pressed */
@@ -1862,7 +1899,8 @@ static void menu_change(uint8_t shown, bool down) {
         band_shown  = 0;
         capture_page(shown, menu_foreground, page_band(band_shown));
         blur_page_left(menu_foreground, menu_blur[band_shown]);
-        menu_drawn = shown;
+        menu_drawn    = shown;
+        menu_bar_from = shown;
         menu_render_foreground();
         menu_active      = true;
         menu_state       = MENU_OPENING;
@@ -1888,7 +1926,8 @@ static void menu_change(uint8_t shown, bool down) {
 static void page_slide_begin(void) {
     capture_page(mode, menu_foreground, page_band(band_shown ^ 1));
     blur_page_left(menu_foreground, menu_blur[band_shown ^ 1]);
-    menu_drawn = mode;
+    menu_bar_from = menu_drawn;
+    menu_drawn    = mode;
     menu_render_foreground();
     page_slide_pending = false;
     page_slide_active  = true;
