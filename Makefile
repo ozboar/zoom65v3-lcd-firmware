@@ -50,7 +50,7 @@ $(BUILD)/%.o: %.s
 DUMPS ?= ../zoom65v3-re/dumps
 INTERNAL_FLASH ?= $(DUMPS)/screen-mcu.bin
 EXTERNAL_FLASH ?= $(DUMPS)/screen-extflash.bin
-SIM_SRCS := tools/sim/sim.c $(addprefix src/,ui.c draw.c gif.c media.c extflash.c assets.c)
+SIM_SRCS := tools/sim/sim.c $(addprefix src/,ui.c lcd_target.c draw.c gif.c media.c extflash.c assets.c)
 
 $(BUILD)/sim/sim: $(SIM_SRCS) $(wildcard src/*.h) tools/sim/at32f403a_407.h $(BUILD)/version
 	@mkdir -p $(dir $@)

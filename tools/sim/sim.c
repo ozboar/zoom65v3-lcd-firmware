@@ -15,6 +15,7 @@
 
 #include "board.h"
 #include "lcd.h"
+#include "panel.h"
 #include "ui.h"
 
 #define INTERNAL_FLASH 0x08000000u
@@ -63,7 +64,7 @@ void lcd_set_brightness(uint8_t percent) {
     (void)percent;
 }
 
-void lcd_stream_begin(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1) {
+void panel_window(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1) {
     window_x0 = x0;
     window_y0 = y0;
     window_x1 = x1;
@@ -73,7 +74,7 @@ void lcd_stream_begin(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1) {
 }
 
 /* Same order as the panel: left to right, then top to bottom */
-void lcd_stream_pixel(uint16_t color) {
+void panel_pixel(uint16_t color) {
     if (cursor_x >= 0 && cursor_x < LCD_WIDTH && cursor_y < LCD_HEIGHT) {
         framebuffer[cursor_y][cursor_x] = color;
     }
@@ -83,14 +84,18 @@ void lcd_stream_pixel(uint16_t color) {
     }
 }
 
-void lcd_stream_end(void) {
+void panel_write(const uint8_t *bytes, uint16_t len) {
+    for (uint16_t i = 0; i + 1 < len; i += 2) {
+        panel_pixel((uint16_t)(bytes[i] << 8 | bytes[i + 1]));
+    }
 }
 
-void lcd_send_rect(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, const uint8_t *pixels) {
-    lcd_stream_begin(x0, y0, x1, y1);
-    for (uint32_t i = 0; i < (x1 - x0 + 1u) * (y1 - y0 + 1u) * 2u; i += 2) {
-        lcd_stream_pixel((uint16_t)(pixels[i] << 8 | pixels[i + 1]));
-    }
+void panel_end(void) {
+}
+
+void panel_send_rect(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, const uint8_t *pixels) {
+    panel_window(x0, y0, x1, y1);
+    panel_write(pixels, (uint16_t)((x1 - x0 + 1u) * (y1 - y0 + 1u) * 2u));
 }
 
 void lcd_wait_idle(void) {
@@ -155,6 +160,8 @@ static void command(const char *dir, char *line) {
         save(dir, name);
     } else if (sscanf(line, "mode %d", &a) == 1) {
         ui_on_mode((uint8_t)a);
+    } else if (sscanf(line, "peek %d", &a) == 1) {
+        ui_on_peek((uint8_t)a);
     } else if (sscanf(line, "accent %d", &a) == 1) {
         ui_on_accent((uint8_t)a);
     } else if (sscanf(line, "units %d", &a) == 1) {

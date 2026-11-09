@@ -1,6 +1,7 @@
-/* Loaded by the ROM bootloader, which keeps the low part of SRAM for itself */
+/* Loaded by the ROM bootloader, which keeps the low part of SRAM for itself while it runs. Free once the firmware starts */
 MEMORY
 {
+    LOW (rw) : ORIGIN = 0x20000000, LENGTH = 32K
     RAM (rwx) : ORIGIN = 0x20008000, LENGTH = 64K
     MEDIA (rw) : ORIGIN = 0x20018000, LENGTH = 112K
 }
@@ -11,6 +12,10 @@ _estack = ORIGIN(RAM) + LENGTH(RAM);
 
 SECTIONS
 {
+    .low_ram (NOLOAD) : {
+        *(.low_ram*)
+    } > LOW
+
     .media_ram (NOLOAD) : {
         *(.media_ram*)
     } > MEDIA

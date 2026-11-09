@@ -1,6 +1,7 @@
 #include "at32f403a_407.h"
 #include "board.h"
 #include "lcd.h"
+#include "panel.h"
 
 /* The controller addresses 128x128. The panel is mounted rotated, which MADCTL_ROTATED undoes, so screen (x, y) is column x, row 10 + y */
 #define CONTROLLER_SIZE 128
@@ -24,7 +25,6 @@ static bool    backlight_on = false;
 static uint8_t brightness   = BRIGHTNESS_FULL;
 static bool    pwm_running;
 static bool    dma_running;
-
 /* Command, data length, data */
 static const uint8_t init_table[] = {
     0xFE, 0,
@@ -287,7 +287,7 @@ void lcd_set_power(bool on) {
     }
 }
 
-void lcd_stream_begin(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1) {
+void panel_window(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1) {
     const uint8_t columns[4] = {0, x0, 0, x1};
     const uint8_t rows[4]    = {0, (uint8_t)(OFFSET_ROW + y0), 0, (uint8_t)(OFFSET_ROW + y1)};
 
@@ -298,17 +298,23 @@ void lcd_stream_begin(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1) {
     select_data();
 }
 
-void lcd_stream_pixel(uint16_t color) {
+void panel_pixel(uint16_t color) {
     spi_send((uint8_t)(color >> 8));
     spi_send((uint8_t)color);
 }
 
-void lcd_stream_end(void) {
+void panel_write(const uint8_t *bytes, uint16_t len) {
+    while (len--) {
+        spi_send(*bytes++);
+    }
+}
+
+void panel_end(void) {
     deselect();
 }
 
-void lcd_send_rect(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, const uint8_t *pixels) {
-    lcd_stream_begin(x0, y0, x1, y1);
+void panel_send_rect(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, const uint8_t *pixels) {
+    panel_window(x0, y0, x1, y1);
     SPI_DMA->maddr = (uint32_t)pixels;
     dma_data_number_set(SPI_DMA, (uint16_t)((x1 - x0 + 1u) * (y1 - y0 + 1u) * 2u));
     dma_running = true;

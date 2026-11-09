@@ -89,10 +89,18 @@
 #define UNITS_SYSTEM_F (1u << 0)
 #define UNITS_WEATHER_F (1u << 1)
 
-/* Page menu: shown when switching pages, then the page opens */
+/*
+ * Page menu: a drawer that slides in over the left of the page when switching pages. Pages
+ * slide behind it as the selection moves, and it slides away once the selection settles
+ */
 #define MENU_SHOW_MS 800
 #define MENU_TOP(row) ((uint8_t)((row) * LCD_HEIGHT / MODE_COUNT))
 #define MENU_BAR_MARGIN 3
+#define MENU_WIDTH 59
+#define MENU_STRIP_WIDTH (LCD_WIDTH - MENU_WIDTH)
+#define MENU_SLIDE_MS 150
+#define PAGE_SLIDE_MS 150
+#define EASE_ONE 1024u
 
 /* A page shown briefly without the menu, then the previous page returns */
 #define PEEK_SHOW_MS 800
@@ -220,6 +228,28 @@ static bool     clock_empty_drawn;
 static bool     menu_active;
 static uint8_t  menu_drawn;
 static uint32_t menu_timer;
+
+typedef enum { MENU_OPENING, MENU_OPEN, MENU_CLOSING } menu_state_t;
+
+static menu_state_t menu_state;
+static uint8_t      menu_edge;
+static uint8_t      menu_edge_from;
+static uint32_t     menu_slide_timer;
+static bool         page_slide_pending;
+static bool         page_slide_active;
+static bool         page_slide_down;
+static uint8_t      page_slide_drawn;
+static uint32_t     page_slide_timer;
+
+/*
+ * A screen drawn off screen for the menu slides, as two bands: the strip right of the drawer, old
+ * and new, or a whole page split at the drawer's edge. The ROM bootloader's SRAM is free for this
+ * once running
+ */
+_Static_assert(2 * MENU_WIDTH == LCD_WIDTH, "the two bands make up one screen");
+static uint8_t page_frame[LCD_WIDTH * LCD_HEIGHT * 2] __attribute__((section(".low_ram")));
+#define page_band(index) (page_frame + (index) * MENU_WIDTH * LCD_HEIGHT * 2)
+static uint8_t band_shown;
 static bool     peek_active;
 static uint8_t  peek_return;
 static uint32_t peek_timer;
@@ -1440,17 +1470,17 @@ static void bongo_time_task(void) {
 
 static void menu_draw_row(uint8_t row, bool selected) {
     static const char *const names[MODE_COUNT] = {
-        [MODE_CLOCK] = "CLOCK", [MODE_BONGO] = "BONGO CAT", [MODE_GRAPH] = "WPM GRAPH", [MODE_SYSTEM] = "SYSTEM STATS",
-        [MODE_WEATHER] = "WEATHER", [MODE_RGB] = "RGB STATUS", [MODE_MEDIA] = "IMAGE / GIF", [MODE_STATUS] = "KEYBOARD INFO",
+        [MODE_CLOCK] = "CLOCK", [MODE_BONGO] = "CAT", [MODE_GRAPH] = "WPM", [MODE_SYSTEM] = "SYSTEM",
+        [MODE_WEATHER] = "WEATHER", [MODE_RGB] = "RGB", [MODE_MEDIA] = "MEDIA", [MODE_STATUS] = "INFO",
     };
     const uint8_t  top    = MENU_TOP(row);
     const uint8_t  bottom = MENU_TOP(row + 1) - 1;
     const uint8_t  y      = top + (bottom - top + 1 - font_small.height) / 2;
-    const uint8_t  right  = LAST_X - MENU_BAR_MARGIN;
+    const uint8_t  right  = MENU_WIDTH - 2 - MENU_BAR_MARGIN;
     const uint16_t bg     = selected ? accent_colors[accent] : COLOR_BLACK;
     const uint16_t fg     = selected ? COLOR_BLACK : COLOR_WHITE;
 
-    draw_fill(0, top, LAST_X, bottom, COLOR_BLACK);
+    draw_fill(0, top, MENU_WIDTH - 2, bottom, COLOR_BLACK);
     if (selected) {
         draw_fill(MENU_BAR_MARGIN, top, right, bottom - 1, bg);
         draw_fill(MENU_BAR_MARGIN, top, MENU_BAR_MARGIN, top, COLOR_BLACK);
@@ -1462,20 +1492,27 @@ static void menu_draw_row(uint8_t row, bool selected) {
     draw_text(MENU_TEXT_X, y, &font_small, names[row], fg, bg);
 }
 
-/* Further presses while it is open move the selection and restart the timer */
-static void menu_show(void) {
-    if (menu_active) {
-        menu_draw_row(menu_drawn, false);
-    } else {
-        pill_active = false;
-        for (uint8_t row = 0; row < MODE_COUNT; row++) {
-            menu_draw_row(row, false);
-        }
-        menu_active = true;
+/* The drawer with its right edge at column edge, the rest of it off the left of the screen */
+static void menu_draw_at(uint8_t edge) {
+    if (!edge) {
+        return;
     }
-    menu_draw_row(mode, true);
-    menu_drawn = mode;
-    menu_timer = board_millis();
+    lcd_view_begin((int16_t)edge - MENU_WIDTH, 0, edge - 1);
+    for (uint8_t row = 0; row < MODE_COUNT; row++) {
+        menu_draw_row(row, row == menu_drawn);
+    }
+    draw_fill(MENU_WIDTH - 1, 0, MENU_WIDTH - 1, LAST_Y, COLOR_GRID);
+    lcd_redirect_end();
+}
+
+/* Eases out over duration, from 0 to distance */
+static uint8_t ease_out(uint32_t elapsed, uint32_t duration, uint8_t distance) {
+    if (elapsed >= duration) {
+        return distance;
+    }
+    const uint32_t left = (duration - elapsed) * EASE_ONE / duration;
+    const uint32_t cube = left * left / EASE_ONE * left / EASE_ONE;
+    return (uint8_t)(distance - distance * cube / EASE_ONE);
 }
 
 /* The screen stays black until the keyboard says which mode to show, so no other mode flashes up */
@@ -1519,44 +1556,9 @@ static void battery_warn_task(bool page_drew) {
     }
 }
 
-void ui_task(void) {
+/* Returns true if the media page drew */
+static bool page_task(void) {
     bool media_drew = false;
-
-    media_task();
-
-    if (!powered) {
-        return;
-    }
-
-    history_task();
-
-    if (peek_active && board_millis() - peek_timer >= PEEK_SHOW_MS) {
-        peek_active = false;
-        mode        = peek_return;
-        if (!media_upload_active()) {
-            enter_mode();
-        }
-    }
-
-    if (media_upload_active()) {
-        return;
-    }
-
-    if (waiting_for_mode) {
-        if (board_millis() - start_time < FIRST_MODE_WAIT_MS) {
-            return;
-        }
-        waiting_for_mode = false;
-        enter_mode();
-    }
-
-    if (menu_active) {
-        if (board_millis() - menu_timer >= MENU_SHOW_MS) {
-            menu_active = false;
-            enter_mode();
-        }
-        return;
-    }
 
     switch (mode) {
         case MODE_BONGO:
@@ -1592,8 +1594,178 @@ void ui_task(void) {
         default:
             break;
     }
+    return media_drew;
+}
 
-    battery_warn_task(media_drew);
+/* Draws a page from scratch into memory, split at the drawer's edge. Its state then matches what was drawn */
+static void capture_page(uint8_t page, uint8_t *left, uint8_t *right) {
+    const uint8_t shown = mode;
+
+    mode = page;
+    lcd_capture_begin(left, right, MENU_WIDTH);
+    enter_mode();
+    page_task();
+    battery_warn_task(true);
+    lcd_redirect_end();
+    mode = shown;
+}
+
+static void menu_reset(void) {
+    menu_active        = false;
+    menu_edge          = 0;
+    page_slide_pending = false;
+    page_slide_active  = false;
+}
+
+static void page_slide_draw(uint8_t offset) {
+    const uint8_t *old  = page_band(band_shown);
+    const uint8_t *next = page_band(band_shown ^ 1);
+    const uint16_t row  = MENU_STRIP_WIDTH * 2;
+
+    if (page_slide_down) {
+        if (offset < LCD_HEIGHT) {
+            lcd_blit(MENU_WIDTH, 0, LAST_X, LAST_Y - offset, old + offset * row, MENU_STRIP_WIDTH);
+        }
+        if (offset) {
+            lcd_blit(MENU_WIDTH, LCD_HEIGHT - offset, LAST_X, LAST_Y, next, MENU_STRIP_WIDTH);
+        }
+    } else {
+        if (offset) {
+            lcd_blit(MENU_WIDTH, 0, LAST_X, offset - 1, next + (LCD_HEIGHT - offset) * row, MENU_STRIP_WIDTH);
+        }
+        if (offset < LCD_HEIGHT) {
+            lcd_blit(MENU_WIDTH, offset, LAST_X, LAST_Y, old, MENU_STRIP_WIDTH);
+        }
+    }
+}
+
+static void page_slide_finish(void) {
+    page_slide_active = false;
+    band_shown ^= 1;
+}
+
+/* The page behind the drawer moves to mode, sliding from the shown page once the drawer is open */
+static void menu_change(uint8_t shown, bool down) {
+    const uint32_t now = board_millis();
+
+    if (!menu_active) {
+        pill_active = false;
+        band_shown  = 0;
+        capture_page(shown, 0, page_band(band_shown));
+        menu_drawn       = shown;
+        menu_active      = true;
+        menu_state       = MENU_OPENING;
+        menu_edge_from   = 0;
+        menu_slide_timer = now;
+    } else if (menu_state == MENU_CLOSING) {
+        menu_state       = MENU_OPENING;
+        menu_edge_from   = menu_edge;
+        menu_slide_timer = now;
+    }
+
+    if (page_slide_active) {
+        lcd_blit(MENU_WIDTH, 0, LAST_X, LAST_Y, page_band(band_shown ^ 1), MENU_STRIP_WIDTH);
+        page_slide_finish();
+    }
+    capture_page(mode, 0, page_band(band_shown ^ 1));
+    page_slide_down    = down;
+    page_slide_pending = true;
+    menu_timer         = now;
+}
+
+static void menu_task(void) {
+    const uint32_t now = board_millis();
+
+    switch (menu_state) {
+        case MENU_OPENING: {
+            const uint8_t edge = menu_edge_from + ease_out(now - menu_slide_timer, MENU_SLIDE_MS, MENU_WIDTH - menu_edge_from);
+            if (edge != menu_edge) {
+                menu_edge = edge;
+                menu_draw_at(edge);
+            }
+            if (edge == MENU_WIDTH) {
+                menu_state = MENU_OPEN;
+            }
+            break;
+        }
+        case MENU_OPEN:
+            if (page_slide_pending) {
+                page_slide_pending = false;
+                page_slide_active  = true;
+                page_slide_drawn   = 0;
+                page_slide_timer   = now;
+                menu_draw_row(menu_drawn, false);
+                menu_draw_row(mode, true);
+                menu_drawn = mode;
+            }
+            if (page_slide_active) {
+                const uint8_t offset = ease_out(now - page_slide_timer, PAGE_SLIDE_MS, LCD_HEIGHT);
+                if (offset != page_slide_drawn) {
+                    page_slide_drawn = offset;
+                    page_slide_draw(offset);
+                }
+                if (offset == LCD_HEIGHT) {
+                    page_slide_finish();
+                }
+            } else if (now - menu_timer >= MENU_SHOW_MS) {
+                /* The whole page afresh, as the strip on screen was drawn when the selection moved */
+                capture_page(mode, page_band(band_shown ^ 1), page_band(band_shown));
+                lcd_blit(MENU_WIDTH, 0, LAST_X, LAST_Y, page_band(band_shown), MENU_STRIP_WIDTH);
+                menu_state       = MENU_CLOSING;
+                menu_edge_from   = menu_edge;
+                menu_slide_timer = now;
+            }
+            break;
+        case MENU_CLOSING: {
+            const uint8_t edge = menu_edge_from - ease_out(now - menu_slide_timer, MENU_SLIDE_MS, menu_edge_from);
+            if (edge != menu_edge) {
+                lcd_blit(edge, 0, menu_edge - 1, LAST_Y, page_band(band_shown ^ 1) + edge * 2, MENU_WIDTH);
+                menu_edge = edge;
+                menu_draw_at(edge);
+            }
+            if (!edge) {
+                menu_reset();
+            }
+            break;
+        }
+    }
+}
+
+void ui_task(void) {
+    media_task();
+
+    if (!powered) {
+        return;
+    }
+
+    history_task();
+
+    if (peek_active && board_millis() - peek_timer >= PEEK_SHOW_MS) {
+        peek_active = false;
+        mode        = peek_return;
+        if (!media_upload_active()) {
+            enter_mode();
+        }
+    }
+
+    if (media_upload_active()) {
+        return;
+    }
+
+    if (waiting_for_mode) {
+        if (board_millis() - start_time < FIRST_MODE_WAIT_MS) {
+            return;
+        }
+        waiting_for_mode = false;
+        enter_mode();
+    }
+
+    if (menu_active) {
+        menu_task();
+        return;
+    }
+
+    battery_warn_task(page_task());
 }
 
 void ui_on_tap(void) {
@@ -1693,8 +1865,8 @@ static void upload_draw(void) {
 void ui_upload_begin(bool gif) {
     upload_gif     = gif;
     upload_percent = 0;
-    menu_active    = false;
     pill_active    = false;
+    menu_reset();
     if (powered) {
         upload_draw();
     }
@@ -1741,6 +1913,11 @@ void ui_on_media(uint8_t setting) {
 }
 
 void ui_on_mode(uint8_t value) {
+    const uint8_t shown = mode;
+
+    if (value >= MODE_COUNT) {
+        return;
+    }
     /* The keyboard keeps sending its mode, which should not end a peek */
     if (peek_active) {
         if (value == peek_return) {
@@ -1749,10 +1926,12 @@ void ui_on_mode(uint8_t value) {
         peek_active = false;
         mode        = peek_return;
     }
-    if (value >= MODE_COUNT || (value == mode && !waiting_for_mode)) {
+    if (value == mode && !waiting_for_mode) {
         return;
     }
     const bool first_mode = waiting_for_mode;
+    /* Wrapping around counts as a step, as the keyboard only steps one page at a time */
+    const bool down = value == (mode + 1) % MODE_COUNT || (value != (mode + MODE_COUNT - 1) % MODE_COUNT && value > mode);
 
     mode             = value;
     waiting_for_mode = false;
@@ -1762,7 +1941,7 @@ void ui_on_mode(uint8_t value) {
     if (first_mode) {
         enter_mode();
     } else {
-        menu_show();
+        menu_change(shown, down);
     }
 }
 
@@ -1781,8 +1960,8 @@ void ui_on_peek(uint8_t value) {
     if (value == mode) {
         return;
     }
-    mode        = value;
-    menu_active = false;
+    mode = value;
+    menu_reset();
     if (!media_upload_active()) {
         enter_mode();
     }
@@ -1796,8 +1975,8 @@ void ui_on_power(bool on) {
         peek_active = false;
         mode        = peek_return;
     }
-    powered     = on;
-    menu_active = false;
+    powered = on;
+    menu_reset();
     lcd_set_power(on);
     if (on && media_upload_active()) {
         upload_draw();
@@ -1835,7 +2014,10 @@ void ui_on_brightness(uint8_t percent) {
 }
 
 bool ui_needs_speed(void) {
-    return powered && mode == MODE_MEDIA && media_show_gif && !waiting_for_mode && !menu_active && media_playing();
+    if (powered && menu_active) {
+        return true;
+    }
+    return powered && mode == MODE_MEDIA && media_show_gif && !waiting_for_mode && media_playing();
 }
 
 bool ui_can_sleep(void) {

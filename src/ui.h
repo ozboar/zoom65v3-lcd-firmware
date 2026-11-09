@@ -22,7 +22,7 @@ void ui_on_brightness(uint8_t percent);
 /* The panel is off and nothing needs the MCU running */
 bool ui_can_sleep(void);
 
-/* A GIF is playing, and needs more than the default clock can give it */
+/* A GIF is playing or the menu is moving, and needs more than the default clock can give it */
 bool ui_needs_speed(void);
 void ui_on_layout(bool iso);
 void ui_on_accent(uint8_t accent);
