@@ -118,8 +118,8 @@
 #define MENU_TINT_LEVEL 24
 #define BLUR_WIDTH ((MENU_WIDTH + 1) / 2)
 #define BLUR_HEIGHT (LCD_HEIGHT / 2)
-#define BLUR_RADIUS 2
-#define BLUR_PASSES 3
+#define BLUR_RADIUS 3
+#define BLUR_PASSES 2
 #define BLUR_MAX_SIDE (LCD_WIDTH / 2)
 
 /*
