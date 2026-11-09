@@ -32,12 +32,7 @@ void lcd_wait_idle(void);
  * split go to left, which is split pixels wide, and the rest to right. A null side is dropped
  */
 void lcd_capture_begin(uint8_t *left, uint8_t *right, uint8_t split);
-
-/* Drawing is moved right by dx, and only columns x0 to x1 reach the panel */
-void lcd_view_begin(int16_t dx, uint8_t x0, uint8_t x1);
-
-/* Ends lcd_capture_begin or lcd_view_begin */
-void lcd_redirect_end(void);
+void lcd_capture_end(void);
 
 /* Sends rows of big endian pixels to the panel, stride pixels apart */
 void lcd_blit(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, const uint8_t *pixels, uint8_t stride);
