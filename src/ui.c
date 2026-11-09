@@ -1,3 +1,5 @@
+#include <string.h>
+
 #include "assets.h"
 #include "board.h"
 #include "draw.h"
@@ -104,6 +106,10 @@
 
 /* Changing the clock face or media setting slides the new one in from the right */
 #define TAB_SLIDE_MS 180
+
+/* Changing the accent fades the page from the old color to the new one */
+#define ACCENT_FADE_MS 250
+#define FADE_LEVELS 32
 #define EASE_ONE 1024u
 
 /* A page shown briefly without the menu, then the previous page returns */
@@ -270,6 +276,9 @@ static uint32_t tab_slide_timer;
 static view_t   tab_slide_view;
 static uint8_t  tab_pill_count;
 static uint8_t  tab_pill_selected;
+static bool     tab_fade;
+static uint8_t  tab_fade_top;
+static uint8_t  tab_fade_bottom;
 static bool     peek_active;
 static uint8_t  peek_return;
 static uint32_t peek_timer;
@@ -1814,13 +1823,70 @@ static void tab_slide_capture_page(void) {
 
 static void tab_slide_start(uint8_t pill_count, uint8_t pill_selected) {
     tab_slide_active  = true;
+    tab_fade          = false;
     tab_slide_drawn   = 0;
     tab_slide_timer   = board_millis();
     tab_pill_count    = pill_count;
     tab_pill_selected = pill_selected;
 }
 
+static uint16_t pixel_at(const uint8_t *pixels, uint32_t index) {
+    return (uint16_t)((pixels[index * 2] << 8) | pixels[index * 2 + 1]);
+}
+
+static uint16_t mix_color(uint16_t from, uint16_t to, uint8_t level) {
+    const int32_t r = (int32_t)(from >> 11) + ((int32_t)(to >> 11) - (from >> 11)) * level / FADE_LEVELS;
+    const int32_t g = (int32_t)((from >> 5) & 0x3F) + ((int32_t)((to >> 5) & 0x3F) - ((from >> 5) & 0x3F)) * level / FADE_LEVELS;
+    const int32_t b = (int32_t)(from & 0x1F) + ((int32_t)(to & 0x1F) - (from & 0x1F)) * level / FADE_LEVELS;
+    return (uint16_t)((r << 11) | (g << 5) | b);
+}
+
+/* Fades from the captured old view to the new one, over the rows where they differ */
+static void tab_fade_start(void) {
+    const uint8_t *next = tab_slide_view.pixels;
+    uint8_t        top  = LCD_HEIGHT;
+    uint8_t        bottom = 0;
+
+    for (uint8_t y = 0; y < LCD_HEIGHT; y++) {
+        if (memcmp(page_frame + y * LCD_WIDTH * 2, next + y * LCD_WIDTH * 2, LCD_WIDTH * 2) != 0) {
+            top    = top < y ? top : y;
+            bottom = y;
+        }
+    }
+    if (top > bottom) {
+        return;
+    }
+    tab_slide_active = true;
+    tab_fade         = true;
+    tab_fade_top     = top;
+    tab_fade_bottom  = bottom;
+    tab_slide_drawn  = 0;
+    tab_slide_timer  = board_millis();
+}
+
+static void tab_fade_task(void) {
+    const uint8_t level = ease_out(board_millis() - tab_slide_timer, ACCENT_FADE_MS, FADE_LEVELS);
+
+    if (level != tab_slide_drawn) {
+        tab_slide_drawn = level;
+        lcd_stream_begin(0, tab_fade_top, LAST_X, tab_fade_bottom);
+        for (uint32_t i = (uint32_t)tab_fade_top * LCD_WIDTH; i < (uint32_t)(tab_fade_bottom + 1) * LCD_WIDTH; i++) {
+            const uint16_t from = pixel_at(page_frame, i);
+            const uint16_t to   = pixel_at(tab_slide_view.pixels, i);
+            lcd_stream_pixel(from == to ? to : mix_color(from, to, level));
+        }
+        lcd_stream_end();
+    }
+    if (level == FADE_LEVELS) {
+        tab_slide_active = false;
+    }
+}
+
 static void tab_slide_task(void) {
+    if (tab_fade) {
+        tab_fade_task();
+        return;
+    }
     const uint8_t offset = ease_out(board_millis() - tab_slide_timer, TAB_SLIDE_MS, LCD_WIDTH);
 
     if (offset != tab_slide_drawn) {
@@ -2158,17 +2224,18 @@ void ui_on_accent(uint8_t value) {
     if (value >= ACCENT_COUNT || value == accent) {
         return;
     }
+    /* The media page keeps a GIF in the canvas that the new side would be drawn into */
+    const bool visible = powered && mode != MODE_MEDIA && !waiting_for_mode && !menu_active && !media_upload_active();
+
+    if (visible) {
+        tab_slide_prepare();
+    }
     accent = value;
-    if (powered && mode == MODE_BONGO && !waiting_for_mode && !menu_active && !media_upload_active()) {
-        paw_draw(PAW_LEFT, paw_drawn == PAW_LEFT);
-        paw_draw(PAW_RIGHT, paw_drawn == PAW_RIGHT);
-        cat_keys_redraw_lit();
-    }
-    if (powered && mode == MODE_STATUS && !waiting_for_mode && !menu_active && !media_upload_active()) {
-        status_enter();
-    }
-    if (powered && mode == MODE_GRAPH && !waiting_for_mode && !menu_active && !media_upload_active()) {
-        graph_draw();
+    if (visible) {
+        tab_slide_capture_page();
+        /* A new color is not a new page, so the cat skips its greeting taps */
+        intro_taps = 0;
+        tab_fade_start();
     }
 }
 
