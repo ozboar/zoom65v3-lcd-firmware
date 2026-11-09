@@ -2,6 +2,7 @@
 #include "board.h"
 #include "draw.h"
 #include "extflash.h"
+#include "gif.h"
 #include "keyvis.h"
 #include "lcd.h"
 #include "media.h"
@@ -100,6 +101,9 @@
 #define MENU_STRIP_WIDTH (LCD_WIDTH - MENU_WIDTH)
 #define MENU_SLIDE_MS 150
 #define PAGE_SLIDE_MS 150
+
+/* Changing the clock face or media setting slides the new one in from the right */
+#define TAB_SLIDE_MS 180
 #define EASE_ONE 1024u
 
 /* A page shown briefly without the menu, then the previous page returns */
@@ -242,14 +246,30 @@ static uint8_t      page_slide_drawn;
 static uint32_t     page_slide_timer;
 
 /*
- * A screen drawn off screen for the menu slides, as two bands: the strip right of the drawer, old
- * and new, or a whole page split at the drawer's edge. The ROM bootloader's SRAM is free for this
- * once running
+ * A screen drawn off screen for the slides. The menu uses it as two bands: the strip right of the
+ * drawer, old and new, or a whole page split at the drawer's edge. A tab slide uses it whole for
+ * the old view. The ROM bootloader's SRAM is free for this once running
  */
 _Static_assert(2 * MENU_WIDTH == LCD_WIDTH, "the two bands make up one screen");
 static uint8_t page_frame[LCD_WIDTH * LCD_HEIGHT * 2] __attribute__((section(".low_ram")));
 #define page_band(index) (page_frame + (index) * MENU_WIDTH * LCD_HEIGHT * 2)
 static uint8_t band_shown;
+
+/* What a slide brings in: big endian pixels at a place on the screen, black around them */
+typedef struct {
+    const uint8_t *pixels;
+    uint8_t        x;
+    uint8_t        y;
+    uint8_t        width;
+    uint8_t        height;
+} view_t;
+
+static bool     tab_slide_active;
+static uint8_t  tab_slide_drawn;
+static uint32_t tab_slide_timer;
+static view_t   tab_slide_view;
+static uint8_t  tab_pill_count;
+static uint8_t  tab_pill_selected;
 static bool     peek_active;
 static uint8_t  peek_return;
 static uint32_t peek_timer;
@@ -1418,7 +1438,8 @@ static void pill_task(bool page_drew) {
 }
 
 static void enter_mode(void) {
-    pill_active = false;
+    pill_active      = false;
+    tab_slide_active = false;
     clear_screen();
     switch (mode) {
         case MODE_BONGO:
@@ -1615,6 +1636,7 @@ static void menu_reset(void) {
     menu_edge          = 0;
     page_slide_pending = false;
     page_slide_active  = false;
+    tab_slide_active   = false;
 }
 
 static void page_slide_draw(uint8_t offset) {
@@ -1731,6 +1753,91 @@ static void menu_task(void) {
     }
 }
 
+/* Columns from to to of a view, drawn from screen column x. Whatever the view does not cover is black */
+static void view_draw_columns(const view_t *view, uint8_t from, uint8_t to, uint8_t x) {
+    const int16_t shift  = (int16_t)x - from;
+    const uint8_t last   = view->x + view->width - 1;
+    const uint8_t bottom = view->y + view->height;
+    const uint8_t left   = from > view->x ? from : view->x;
+    const uint8_t right  = to < last ? to : last;
+
+    if (left > right) {
+        draw_fill(x, 0, x + (to - from), LAST_Y, COLOR_BLACK);
+        return;
+    }
+    if (left > from) {
+        draw_fill(x, 0, left - 1 + shift, LAST_Y, COLOR_BLACK);
+    }
+    if (right < to) {
+        draw_fill(right + 1 + shift, 0, to + shift, LAST_Y, COLOR_BLACK);
+    }
+    if (view->y) {
+        draw_fill(left + shift, 0, right + shift, view->y - 1, COLOR_BLACK);
+    }
+    if (bottom < LCD_HEIGHT) {
+        draw_fill(left + shift, bottom, right + shift, LAST_Y, COLOR_BLACK);
+    }
+    lcd_blit(left + shift, view->y, right + shift, bottom - 1, view->pixels + (left - view->x) * 2, view->width);
+}
+
+/* Captures the view on screen as the old side of a tab slide, finishing any slide still running */
+static void tab_slide_prepare(void) {
+    if (tab_slide_active) {
+        view_draw_columns(&tab_slide_view, 0, LAST_X, 0);
+        tab_slide_active = false;
+    }
+    lcd_capture_begin(page_frame, 0, LCD_WIDTH);
+    if (mode == MODE_MEDIA) {
+        /* Entering the page again would restart the GIF */
+        clear_screen();
+        media_page_redraw();
+        media_page_task(false);
+    } else {
+        enter_mode();
+        page_task();
+    }
+    battery_warn_task(true);
+    lcd_redirect_end();
+}
+
+/* Captures the page as it now is into the GIF canvas, which no GIF is using, as the new side */
+static void tab_slide_capture_page(void) {
+    uint8_t *const scratch = gif_scratch();
+
+    lcd_capture_begin(scratch, 0, LCD_WIDTH);
+    enter_mode();
+    page_task();
+    battery_warn_task(true);
+    lcd_redirect_end();
+    tab_slide_view = (view_t){scratch, 0, 0, LCD_WIDTH, LCD_HEIGHT};
+}
+
+static void tab_slide_start(uint8_t pill_count, uint8_t pill_selected) {
+    tab_slide_active  = true;
+    tab_slide_drawn   = 0;
+    tab_slide_timer   = board_millis();
+    tab_pill_count    = pill_count;
+    tab_pill_selected = pill_selected;
+}
+
+static void tab_slide_task(void) {
+    const uint8_t offset = ease_out(board_millis() - tab_slide_timer, TAB_SLIDE_MS, LCD_WIDTH);
+
+    if (offset != tab_slide_drawn) {
+        tab_slide_drawn = offset;
+        if (offset < LCD_WIDTH) {
+            lcd_blit(0, 0, LAST_X - offset, LAST_Y, page_frame + offset * 2, LCD_WIDTH);
+        }
+        if (offset) {
+            view_draw_columns(&tab_slide_view, 0, offset - 1, LCD_WIDTH - offset);
+        }
+    }
+    if (offset == LCD_WIDTH) {
+        tab_slide_active = false;
+        pill_show(tab_pill_count, tab_pill_selected);
+    }
+}
+
 void ui_task(void) {
     media_task();
 
@@ -1762,6 +1869,10 @@ void ui_task(void) {
 
     if (menu_active) {
         menu_task();
+        return;
+    }
+    if (tab_slide_active) {
+        tab_slide_task();
         return;
     }
 
@@ -1899,6 +2010,9 @@ void ui_on_media(uint8_t setting) {
     if (setting >= MEDIA_SETTING_COUNT || setting == media_setting) {
         return;
     }
+    if (visible) {
+        tab_slide_prepare();
+    }
     media_setting  = setting;
     media_reactive = setting == MEDIA_SETTING_REACTIVE;
     if ((setting != MEDIA_SETTING_IMAGE) != media_show_gif) {
@@ -1907,9 +2021,25 @@ void ui_on_media(uint8_t setting) {
             media_page_enter(media_show_gif);
         }
     }
-    if (visible) {
-        pill_show(MEDIA_SETTING_COUNT, setting);
+    if (!visible) {
+        return;
     }
+
+    if (!media_show_gif) {
+        tab_slide_capture_page();
+    } else {
+        /* A GIF decodes onto the canvas, so the slide brings in the canvas itself */
+        lcd_capture_begin(0, 0, LCD_WIDTH);
+        media_page_task(true);
+        lcd_redirect_end();
+        if (!media_page_gif_rect(&tab_slide_view.x, &tab_slide_view.y, &tab_slide_view.width, &tab_slide_view.height)) {
+            enter_mode();
+            pill_show(MEDIA_SETTING_COUNT, setting);
+            return;
+        }
+        tab_slide_view.pixels = gif_canvas();
+    }
+    tab_slide_start(MEDIA_SETTING_COUNT, setting);
 }
 
 void ui_on_mode(uint8_t value) {
@@ -2014,7 +2144,7 @@ void ui_on_brightness(uint8_t percent) {
 }
 
 bool ui_needs_speed(void) {
-    if (powered && menu_active) {
+    if (powered && (menu_active || tab_slide_active)) {
         return true;
     }
     return powered && mode == MODE_MEDIA && media_show_gif && !waiting_for_mode && media_playing();
@@ -2063,11 +2193,15 @@ void ui_on_clock_face(uint8_t value) {
     if (value >= CLOCK_FACE_COUNT || value == clock_face) {
         return;
     }
+    const bool visible = mode == MODE_CLOCK && powered && !waiting_for_mode && !menu_active && !media_upload_active();
+
+    if (visible) {
+        tab_slide_prepare();
+    }
     clock_face = value;
-    if (mode == MODE_CLOCK && powered && !waiting_for_mode && !menu_active && !media_upload_active()) {
-        clear_screen();
-        clock_enter();
-        pill_show(CLOCK_FACE_COUNT, value);
+    if (visible) {
+        tab_slide_capture_page();
+        tab_slide_start(CLOCK_FACE_COUNT, value);
     }
 }
 

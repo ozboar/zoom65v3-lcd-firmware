@@ -316,3 +316,14 @@ void media_page_task(bool playing) {
     frame_delay = delay;
     draw_canvas();
 }
+
+bool media_page_gif_rect(uint8_t *x, uint8_t *y, uint8_t *width, uint8_t *height) {
+    if (!page_gif || !gif_ready) {
+        return false;
+    }
+    *width  = gif_width();
+    *height = gif_height();
+    *x      = (LCD_WIDTH - *width) / 2;
+    *y      = (LCD_HEIGHT - *height) / 2;
+    return true;
+}

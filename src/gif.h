@@ -17,3 +17,6 @@ uint8_t gif_height(void);
 
 /* Big endian pixels, the order the panel takes */
 const uint8_t *gif_canvas(void);
+
+/* The canvas as room for a whole screen of pixels, while no GIF is showing. Opening one starts over */
+uint8_t *gif_scratch(void);

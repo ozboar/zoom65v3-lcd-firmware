@@ -27,3 +27,6 @@ bool media_page_take_drawn(void);
 
 /* Draws the current picture again, without moving the GIF on */
 void media_page_redraw(void);
+
+/* Where the GIF's canvas sits on screen, or false if the page shows no GIF */
+bool media_page_gif_rect(uint8_t *x, uint8_t *y, uint8_t *width, uint8_t *height);

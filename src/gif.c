@@ -183,3 +183,7 @@ uint8_t gif_height(void) {
 const uint8_t *gif_canvas(void) {
     return (const uint8_t *)canvas;
 }
+
+uint8_t *gif_scratch(void) {
+    return (uint8_t *)canvas;
+}
