@@ -99,6 +99,15 @@ status 0 1 1 82
 wait 100
 shot info
 
+extra 5
+wait 1100
+shot info-charging
+extra 7
+wait 100
+shot info-full
+extra 4
+wait 100
+
 upload 1 62
 wait 10
 shot upload

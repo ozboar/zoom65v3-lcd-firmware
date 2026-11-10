@@ -192,6 +192,8 @@ enum { CLOCK_FACE_DETAILED, CLOCK_FACE_SIMPLE, CLOCK_FACE_DIGITAL, CLOCK_FACE_BI
 #define STATUS_BUILD_Y 106
 #define STATUS_BUILD_FIELD_SIZE 10
 #define STATUS_BATTERY_LOW 20
+#define STATUS_CHARGE_STEPS 4
+#define STATUS_CHARGE_STEP_MS 500
 #define BATTERY_WARN_PERCENT 10
 #define BATTERY_WARN_CLEAR_PERCENT 15
 /* Pages redraw over the icon, so this is how long it can stay hidden */
@@ -429,34 +431,60 @@ static char *append_two_digits(char *out, uint32_t value) {
     return append_number(out, value);
 }
 
-static const char *status_charge_text(void) {
-    if (!status_extra_received || !(status_flags & STATUS_FLAG_CHARGING)) {
-        return "";
-    }
-    return status_flags & STATUS_FLAG_FULL ? "FULL" : "CHG";
+/* The reading is the battery's voltage, which charging pushes up, so on the cable only the charger's state shows */
+static bool status_plugged(void) {
+    return status_extra_received && (status_flags & STATUS_FLAG_CHARGING);
+}
+
+static bool status_full(void) {
+    return status_plugged() && (status_flags & STATUS_FLAG_FULL);
+}
+
+/* While charging the battery fills up step by step, then starts over */
+static uint8_t status_charge_step(void) {
+    return (board_millis() / STATUS_CHARGE_STEP_MS) % (STATUS_CHARGE_STEPS + 1);
 }
 
 static void status_draw_header(void) {
-    char           text[6];
-    const uint32_t percent = status_battery > 100 ? 100 : status_battery;
-    const uint8_t  right   = STATUS_MARGIN + STATUS_ICON_WIDTH - 1;
-    const uint8_t  bottom  = STATUS_HEADER_Y + STATUS_ICON_HEIGHT - 1;
-    const uint8_t  width   = STATUS_ICON_WIDTH - 4;
-    const uint8_t  fill    = (uint8_t)((uint32_t)width * percent / 100);
+    char          text[6];
+    const uint8_t right  = STATUS_MARGIN + STATUS_ICON_WIDTH - 1;
+    const uint8_t bottom = STATUS_HEADER_Y + STATUS_ICON_HEIGHT - 1;
+    const uint8_t width  = STATUS_ICON_WIDTH - 4;
+    uint32_t      percent;
+
+    if (status_full()) {
+        percent = 100;
+        append_text(text, "FULL");
+    } else if (status_plugged()) {
+        percent = status_charge_step() * 100u / STATUS_CHARGE_STEPS;
+        append_text(text, "CHG");
+    } else {
+        percent = status_battery > 100 ? 100 : status_battery;
+        append_text(append_number(text, status_battery), "%");
+    }
+
+    const uint8_t fill = (uint8_t)((uint32_t)width * percent / 100);
+    const bool    low  = !status_plugged() && percent < STATUS_BATTERY_LOW;
 
     /* A filled band, with the battery and text in black on it */
     draw_fill(0, 0, LAST_X, STATUS_DIVIDER_Y, accent_colors[accent]);
     draw_outline(STATUS_MARGIN, STATUS_HEADER_Y, right, bottom, COLOR_BLACK);
     draw_fill(right + 1, STATUS_HEADER_Y + 3, right + 2, bottom - 3, COLOR_BLACK);
     if (fill) {
-        draw_fill(STATUS_MARGIN + 2, STATUS_HEADER_Y + 2, STATUS_MARGIN + 1 + fill, bottom - 2, percent < STATUS_BATTERY_LOW ? COLOR_LOW : COLOR_BLACK);
+        draw_fill(STATUS_MARGIN + 2, STATUS_HEADER_Y + 2, STATUS_MARGIN + 1 + fill, bottom - 2, low ? COLOR_LOW : COLOR_BLACK);
     }
-
-    append_text(append_number(text, status_battery), "%");
     draw_text(right + 5, STATUS_HEADER_Y, &font_small, text, COLOR_BLACK, accent_colors[accent]);
+}
 
-    const char *charge = status_charge_text();
-    draw_text(RIGHT_EDGE - draw_text_width(&font_small, charge), STATUS_HEADER_Y, &font_small, charge, COLOR_BLACK, accent_colors[accent]);
+/* Changes whenever the header looks different, including each step of the charging fill */
+static int32_t status_header_state(void) {
+    if (status_full()) {
+        return 1 << 16;
+    }
+    if (status_plugged()) {
+        return 2 << 16 | status_charge_step();
+    }
+    return status_battery;
 }
 
 static uint32_t status_uptime_seconds(void) {
@@ -565,7 +593,7 @@ static void status_enter(void) {
 }
 
 static void status_task(void) {
-    const int32_t header = status_battery | (status_extra_received ? (status_flags & (STATUS_FLAG_CHARGING | STATUS_FLAG_FULL)) << 8 : 0);
+    const int32_t header = status_header_state();
     if (status_header_drawn != header) {
         status_header_drawn = header;
         status_draw_header();
